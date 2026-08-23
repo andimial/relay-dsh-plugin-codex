@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
+import { codexSpawnError, resolveCodexLaunch } from "./codex-command.mjs";
 
 const NATIVE_CODEX_CLIENT_INFO = {
   name: "Codex Desktop",
@@ -100,15 +101,18 @@ const NATIVE_CODEX_CAPABILITIES = {
 
 export class CodexAppServerClient extends EventEmitter {
   constructor({
-    command = "codex",
+    command,
     args = NATIVE_CODEX_APP_SERVER_ARGS,
     requestTimeoutMs = 30_000,
     clientInfo = NATIVE_CODEX_CLIENT_INFO,
     capabilities = NATIVE_CODEX_CAPABILITIES,
   } = {}) {
     super();
-    this.command = command;
-    this.args = args;
+    const launch = resolveCodexLaunch({ command });
+    this.command = launch.command;
+    this.commandSource = launch.source;
+    this.appServerArgs = [...args];
+    this.args = [...launch.argsPrefix, ...args];
     this.requestTimeoutMs = requestTimeoutMs;
     this.clientInfo = structuredClone(clientInfo);
     this.capabilities = structuredClone(capabilities);
@@ -130,7 +134,10 @@ export class CodexAppServerClient extends EventEmitter {
     this.process.stderr.setEncoding("utf8");
     this.process.stderr.on("data", (chunk) => this.emit("diagnostic", String(chunk)));
     this.process.stdin.on("error", (error) => this.handleStdinError(error));
-    this.process.once("error", (error) => this.failAll(error));
+    this.process.once("error", (error) => {
+      this.process = null;
+      this.failAll(codexSpawnError(error, this.command, this.commandSource));
+    });
     this.process.once("exit", (code, signal) => {
       this.process = null;
       if (!this.closed) {

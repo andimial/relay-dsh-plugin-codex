@@ -30,6 +30,10 @@ test('English and Chinese READMEs form a complete newcomer path', () => {
   assert.match(chinese, /不需要单独的激活命令/)
   assert.match(english, /codex login/)
   assert.match(chinese, /codex login/)
+  assert.match(english, /bundled\s+official `@openai\/codex` runtime/)
+  assert.match(english, /RELAY_CODEX_COMMAND/)
+  assert.match(chinese, /随插件安装的官方 `@openai\/codex` 运行时/)
+  assert.match(chinese, /RELAY_CODEX_COMMAND/)
 })
 
 test('README screenshot and bilingual preset ship with the package', () => {
@@ -49,7 +53,7 @@ test('README preserves standalone scope and every supported installation source'
     assert.match(readme, /relay-dsh-plugin-codex@latest/)
     assert.match(readme, /relay-dsh-plugin-codex@next/)
     assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex#main/)
-    assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex#v0\.1\.1-rc\.2/)
+    assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex#v0\.1\.1-rc\.3/)
   }
   assert.match(english, /DSH is currently a developer preview/)
 })

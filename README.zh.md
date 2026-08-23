@@ -42,17 +42,22 @@ DSH 当前仍是开发者预览版本，可能发生不兼容修改。本仓库�
 
 ### 1. 准备 Codex 认证
 
-插件会以 App Server 模式启动本机 Codex CLI。首次创建 DSH Codex 会话前，
-请确认 CLI 可用并完成认证：
+插件会安装一个固定版本的官方 `@openai/codex` 运行时，并以 App Server 模式
+启动它。该运行时包含 macOS、Windows、Linux 的 x64 和 arm64 原生二进制，
+因此 DSH 不需要从自身的 `PATH` 中寻找 `codex` 命令。
+
+Codex 仍然需要认证。首次创建 DSH Codex 会话前，请安装或打开任一官方 Codex
+客户端并完成登录。使用 CLI 时，可以通过以下命令检查共享的本地认证状态：
 
 ```bash
 codex --version
 codex login
 ```
 
-ChatGPT 登录和 API Key 认证方式参见官方
-[Codex 认证文档](https://developers.openai.com/codex/auth/)。认证信息仍由 Codex
-原有的本地机制管理，本插件不会收集认证信息。
+安装及登录方式参见官方 [Codex CLI 文档](https://learn.chatgpt.com/docs/codex/cli)
+和[认证文档](https://learn.chatgpt.com/docs/auth)。认证信息仍由 Codex 原有的
+本地机制管理，本插件不会收集认证信息。安装本插件会提供 App Server 运行时，
+但不会向系统全局安装 `codex` Shell 命令。
 
 ### 2. 选择安装来源并安装
 
@@ -81,7 +86,7 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-本文更新时，`next` 指向 `0.1.1-rc.2`。
+本候选版本发布后，`next` 将指向 `0.1.1-rc.3`。
 
 #### GitHub 开发版
 
@@ -95,7 +100,7 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/rel
 SHA。例如：
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.1-rc.2
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.1-rc.3
 ```
 
 官方 DSH CLI 会在需要时初始化 `web` Profile，通过 `pnpm` 安装所选软件包，
@@ -180,8 +185,27 @@ relay-dsh-plugin-codex`。如果 pnpm 找不到插件，请重新执行 npm 安�
 
 ### 第一条消息提示认证失败或找不到可执行文件
 
-在启动 DSH 的同一用户环境中执行 `codex --version` 和 `codex login`。
-修复 `PATH` 或认证后重新启动 DSH。
+请使用官方 Codex 客户端，以启动 DSH 的同一个操作系统用户执行 `codex
+login`，然后重启 DSH。插件默认使用随插件安装的官方 `@openai/codex` 运行时，
+不依赖 `PATH`。
+
+如果错误提示随包运行时缺失，请更新或重新安装插件，让包管理器恢复当前平台
+对应的 optional dependency。受管部署也可以明确指定其他 Codex 原生可执行文件：
+
+```bash
+# macOS 或 Linux
+RELAY_CODEX_COMMAND=/absolute/path/to/codex dsh web
+```
+
+```powershell
+# Windows PowerShell
+$env:RELAY_CODEX_COMMAND = 'C:\absolute\path\to\codex.exe'
+dsh web
+```
+
+DSH Bundle 配置项 `codexCommand` 的优先级高于 `RELAY_CODEX_COMMAND`。建议填写
+原生可执行文件的绝对路径；两者都不设置时，会使用随插件发布并完成兼容性验证
+的 Codex 版本。
 
 ### 输入框不可用
 

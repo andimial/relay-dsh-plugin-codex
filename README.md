@@ -44,17 +44,26 @@ here.
 
 ### 1. Prepare Codex authentication
 
-The plugin launches the local Codex CLI in App Server mode. Confirm that the CLI
-is available and authenticate it before starting your first DSH Codex session:
+The plugin installs a pinned official `@openai/codex` runtime and launches it in
+App Server mode. The runtime contains native binaries for macOS, Windows, and
+Linux on x64 and arm64, so DSH does not need to find a `codex` command on its
+`PATH`.
+
+Codex authentication is still required. Install or open an official Codex
+client and authenticate it before starting your first DSH Codex session. When
+using the CLI, verify the shared local credentials with:
 
 ```bash
 codex --version
 codex login
 ```
 
-See the official [Codex authentication documentation](https://developers.openai.com/codex/auth/)
-for ChatGPT sign-in and API-key options. Credentials stay under Codex's normal
-local authentication mechanism; this plugin does not collect them.
+See the official [Codex CLI guide](https://learn.chatgpt.com/docs/codex/cli) and
+[authentication documentation](https://learn.chatgpt.com/docs/auth) for
+installation and sign-in options. Credentials stay under Codex's normal local
+authentication mechanism; this plugin does not collect them. Installing this
+plugin supplies its App Server runtime, but does not add a global `codex` shell
+command.
 
 ### 2. Choose a package source and install
 
@@ -83,7 +92,7 @@ CI publishing and official DSH compatibility checks:
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-At the time of writing, `next` resolves to `0.1.1-rc.2`.
+After this candidate is published, `next` resolves to `0.1.1-rc.3`.
 
 #### GitHub development build
 
@@ -97,7 +106,7 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/rel
 full Commit SHA instead. For example:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.1-rc.2
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.1-rc.3
 ```
 
 The official DSH CLI initializes the `web` Profile if it does not exist, asks
@@ -187,8 +196,28 @@ installation command and read its final error.
 
 ### The first message reports an authentication or executable error
 
-Run `codex --version` and `codex login` in the same user environment that starts
-DSH. Restart DSH after fixing `PATH` or authentication.
+Run `codex login` with an official Codex client under the same operating-system
+user that starts DSH, then restart DSH. The plugin normally uses its bundled
+official `@openai/codex` runtime and does not depend on `PATH`.
+
+If the error says the bundled runtime is missing, update or reinstall the plugin
+so the package manager restores the platform-specific optional dependency. A
+managed deployment can explicitly select another native Codex executable:
+
+```bash
+# macOS or Linux
+RELAY_CODEX_COMMAND=/absolute/path/to/codex dsh web
+```
+
+```powershell
+# Windows PowerShell
+$env:RELAY_CODEX_COMMAND = 'C:\absolute\path\to\codex.exe'
+dsh web
+```
+
+The DSH bundle configuration property `codexCommand` has higher priority than
+`RELAY_CODEX_COMMAND`. Prefer an absolute native executable path; leaving both
+unset selects the bundled, plugin-tested Codex version.
 
 ### The composer is disabled
 

@@ -20,7 +20,7 @@ export function createCodexExecutionPlugin(config = {}) {
     activate({ capabilities, defer }) {
       const logger = capabilities.optional("relay.logging.v1") ?? console;
       const client = config.client ?? new CodexAppServerClient({
-        command: config.command ?? "codex",
+        command: config.command,
         args: config.args ?? NATIVE_CODEX_APP_SERVER_ARGS,
         requestTimeoutMs: positiveInteger(config.requestTimeoutMs, 60_000),
       });

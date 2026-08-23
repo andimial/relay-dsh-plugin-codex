@@ -5,7 +5,20 @@ import { CodexAppServerClient, NATIVE_CODEX_APP_SERVER_ARGS } from "../app-serve
 
 test("default App Server launch arguments match native Codex Desktop", () => {
   const client = new CodexAppServerClient();
-  assert.deepEqual(client.args, NATIVE_CODEX_APP_SERVER_ARGS);
+  assert.deepEqual(client.appServerArgs, NATIVE_CODEX_APP_SERVER_ARGS);
+  assert.equal(client.command, process.execPath);
+  assert.equal(client.commandSource, "bundled");
+});
+
+test("a missing Codex executable reports an actionable configuration error", async () => {
+  const client = new CodexAppServerClient({
+    command: "/relay/missing/codex",
+    requestTimeoutMs: 1_000,
+  });
+  await assert.rejects(client.start(), (error) => {
+    assert.equal(error.code, "CODEX_EXECUTABLE_NOT_FOUND");
+    return /RELAY_CODEX_COMMAND/.test(error.message);
+  });
 });
 
 test("JSON-RPC requests resolve, reject, and time out with their method context", async () => {
