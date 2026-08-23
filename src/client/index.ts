@@ -3,7 +3,6 @@ import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/c
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import { AdvancedDebugPreference } from '../../advanced-debug-preference.mjs'
 import {
   AdvancedDebugGuard,
@@ -14,10 +13,6 @@ import {
 import { CodexActivityView } from './CodexActivityView.tsx'
 import { codexActivityDefinition } from './codex-activity.ts'
 import { en, zh, type CodexLocaleKey } from './locales.ts'
-import { CODEX_REMOTE } from './remote.ts'
-import { apply as applyFileExplorer, type WorkspaceFilesWire } from './workbench/files/index.ts'
-import { apply as applyWorkbenchLayout } from './workbench/layout/index.ts'
-import { apply as applyWebTerminal, type WorkbenchTerminalWire } from './workbench/terminal/index.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -28,28 +23,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 interface ConnectionFace { api: { sessions: Pick<IApiClient['sessions'], 'models' | 'selectModel'> } }
 interface ModelGroup { readonly id: string; readonly models: readonly { readonly id: string; readonly reasoning?: { readonly defaultEffort?: string } }[] }
 
-export const inject = ['slots', 'theme', 'locale', 'remote', 'sessions', 'connection', 'conversationEvents']
+export const inject = ['slots', 'theme', 'locale', 'sessions', 'connection', 'conversationEvents']
 
-export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
-  applyWorkbenchLayout(ctx)
-  const unmount = await ctx.remote.$mount(CODEX_REMOTE as TypertRemoteContribution)
-  try {
-    const workspaceFiles = ctx.get('remote.relayWorkspaceFiles' as never) as WorkspaceFilesWire | undefined
-    if (workspaceFiles === undefined) throw new Error('Codex workspace Remote capability did not mount')
-    applyFileExplorer(ctx, workspaceFiles)
-    const terminal = ctx.get('remote.relayWorkbenchTerminal' as never) as WorkbenchTerminalWire | undefined
-    if (terminal !== undefined) applyWebTerminal(ctx, terminal)
-    applyAdvancedDebug(ctx)
-    ctx.conversationEvents.register(codexActivityDefinition)
-    ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
-      name: 'conversation.chat.node', key: 'relay-codex-activity',
-    }, CodexActivityView))
-    const unsubscribe = installModelSelection(ctx, 'relay-codex', 'relay-codex', 'relay-claude')
-    return async () => { unsubscribe(); await unmount() }
-  } catch (error) {
-    await unmount()
-    throw error
-  }
+export function apply(ctx: ClientContext): () => void {
+  applyAdvancedDebug(ctx)
+  ctx.conversationEvents.register(codexActivityDefinition)
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+    name: 'conversation.chat.node', key: 'relay-codex-activity',
+  }, CodexActivityView))
+  return installModelSelection(ctx, 'relay-codex', 'relay-codex', 'relay-claude')
 }
 
 function applyAdvancedDebug(ctx: ClientContext): void {

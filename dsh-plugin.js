@@ -3,10 +3,8 @@ import { join, resolve } from "node:path";
 import { KNOWN_SESSION_EVENT_TYPES } from "@deepseek-ai/dsh-session";
 import { definePlugin } from "./internal/plugin-sdk.mjs";
 import { CodexDshAdapter, CODEX_ACTIVITY_EVENT, CODEX_PROVIDER } from "./codex-adapter.js";
-import { RelayCodexTerminalGateway } from "./codex-terminal-gateway.js";
 import { CodexLinkStore } from "./codex-link-store.js";
 import { CODEX_APP_DYNAMIC_TOOLS, handleCodexServerRequest } from "./codex-tools.js";
-import { RelayWorkspaceFilesGateway } from "./workspace-files-gateway.js";
 
 export function createDshCodexPlugin(ctx, config = {}) {
   return definePlugin({
@@ -33,12 +31,7 @@ export function createDshCodexPlugin(ctx, config = {}) {
         void handleCodexServerRequest(ctx, { adapter, runtime, request })
           .catch(error => ctx.logger.error(`Relay failed to handle a Codex interaction: ${error?.stack ?? error}`));
       }));
-      if (terminal) await activateCordisScope(ctx, defer, "relay Codex terminal remote", (scope) => {
-        new RelayCodexTerminalGateway(scope, { terminal, resolveAgent });
-      });
-      await activateCordisScope(ctx, defer, "relay Codex workspace remote", (scope) => {
-        new RelayWorkspaceFilesGateway(scope, { resolveAgent });
-      });
+      if (terminal) registerOptionalTerminalProvider(ctx, defer, terminal);
       defer(ctx.on("llm/stream", (options, next) => {
         if (options.purpose || !options.sessionId) return next();
         const agent = ctx.agents.get(options.sessionId);
@@ -62,10 +55,20 @@ export function installCodexSessionEventType() {
   KNOWN_SESSION_EVENT_TYPES.add(CODEX_ACTIVITY_EVENT);
 }
 
-async function activateCordisScope(ctx, defer, name, setup) {
-  const fiber = ctx.plugin({ name, apply: setup });
+function registerOptionalTerminalProvider(ctx, defer, terminal) {
+  const fiber = ctx.inject(["relayTerminalProviders"], (scope) => {
+    if (scope.relayTerminalProviders.apiVersion !== 1) {
+      throw new Error(`Codex requires terminal provider API v1, received ${scope.relayTerminalProviders.apiVersion}`);
+    }
+    scope.effect(() => scope.relayTerminalProviders.register({
+      id: "codex-app-server",
+      title: "Codex App Server",
+      whenReady: () => terminal.whenReady(),
+      request: (method, params, options) => terminal.request(method, params, options),
+      subscribeNotification: listener => terminal.subscribeNotification(listener),
+    }), "relay Codex terminal provider");
+  });
   defer(() => fiber.dispose());
-  await fiber;
 }
 
 function createAgentLookup(ctx) {

@@ -3,10 +3,12 @@
 `@relay/dsh-plugin-codex` adds a Codex conversation mode to DeepSeek Harness. One DSH
 Session owns one Codex App Server Thread, including model and reasoning selection,
 approvals, questions, images, tool activity, interruption, context continuation,
-workspace files, and terminal surfaces.
+and an optional Codex App Server terminal-provider contribution.
 
 The package has no dependency on Relay Events or any other Relay plugin. Installing
 it does not add Wait, Monitor, callback, or event-management behavior.
+It also does not replace the official DSH layout or install Files/Terminal views;
+those are independent workbench plugins.
 
 Tools contributed by separately installed DSH plugins are mapped generically into
 the Codex App Server `dsh` namespace and execute through the owning Agent's DSH tool
