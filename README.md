@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-`@relay/dsh-plugin-codex` adds **Codex as a conversation backend** to the
+`relay-dsh-plugin-codex` adds **Codex as a conversation backend** to the
 official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 (DSH) Web UI. After installation, **Codex** appears in DSH's New Session mode
 menu. One DSH Session is bound to one Codex App Server Thread.
@@ -54,26 +54,26 @@ See the official [Codex authentication documentation](https://developers.openai.
 for ChatGPT sign-in and API-key options. Credentials stay under Codex's normal
 local authentication mechanism; this plugin does not collect them.
 
-### 2. Install from GitHub
+### 2. Install from npm
 
 Stop a running DSH Web process before changing Profile bundles. Then run:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex
 ```
 
 The official DSH CLI initializes the `web` Profile if it does not exist, asks
-`pnpm` to install the repository, and adds the plugin's bundle layer. No Relay
-checkout is required.
+`pnpm` to install the npm package, and adds the plugin's bundle layer. No Relay
+checkout is required. The current npm release is `0.1.0`.
 
 If you already installed the `dsh` command, the shorter equivalent is:
 
 ```bash
-dsh plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex
+dsh plugin --profile web add relay-dsh-plugin-codex
 ```
 
-The npm package name is `@relay/dsh-plugin-codex`, but it is not published yet.
-Use the GitHub command above until an npm release is listed in this README.
+To test an unreleased commit instead, replace the package name with
+`github:yangbobo2021/relay-dsh-plugin-codex`.
 
 ### 3. Start or restart DSH Web
 
@@ -135,13 +135,13 @@ Stop DSH Web before changing the bundle, then restart it afterward.
 
 ```bash
 # Show why the plugin is installed
-dsh plugin --profile web why @relay/dsh-plugin-codex
+dsh plugin --profile web why relay-dsh-plugin-codex
 
-# Update the GitHub dependency
-dsh plugin --profile web update @relay/dsh-plugin-codex
+# Update the npm dependency
+dsh plugin --profile web update relay-dsh-plugin-codex
 
 # Remove it
-dsh plugin --profile web remove @relay/dsh-plugin-codex
+dsh plugin --profile web remove relay-dsh-plugin-codex
 ```
 
 Use the `npx @deepseek-ai/dsh@0.1.1-rc.2` prefix instead of `dsh` when you do not
@@ -152,7 +152,7 @@ have a persistent DSH command.
 ### Codex is missing from the mode menu
 
 Restart DSH Web. Then run `dsh plugin --profile web why
-@relay/dsh-plugin-codex`. If pnpm cannot find the package, repeat the GitHub
+relay-dsh-plugin-codex`. If pnpm cannot find the package, repeat the npm
 installation command and read its final error.
 
 ### The first message reports an authentication or executable error

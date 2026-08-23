@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-`@relay/dsh-plugin-codex` 为官方
+`relay-dsh-plugin-codex` 为官方
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）Web
 界面增加 **Codex 对话后端**。安装后，DSH 的新建会话模式菜单中会出现
 **Codex**。每个 DSH Session 会绑定一个 Codex App Server Thread。
@@ -52,25 +52,26 @@ ChatGPT 登录和 API Key 认证方式参见官方
 [Codex 认证文档](https://developers.openai.com/codex/auth/)。认证信息仍由 Codex
 原有的本地机制管理，本插件不会收集认证信息。
 
-### 2. 直接从 GitHub 安装
+### 2. 从 npm 安装
 
 修改 Profile 插件前，请先停止正在运行的 DSH Web，然后执行：
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex
 ```
 
-官方 DSH CLI 会在需要时初始化 `web` Profile，通过 `pnpm` 安装 GitHub
-仓库，并将插件加入 Bundle 配置。用户不需要下载 Relay 仓库。
+官方 DSH CLI 会在需要时初始化 `web` Profile，通过 `pnpm` 安装 npm 包，
+并将插件加入 Bundle 配置。用户不需要下载 Relay 仓库。当前 npm 版本为
+`0.1.0`。
 
 如果已经安装了持久可用的 `dsh` 命令，也可以使用：
 
 ```bash
-dsh plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex
+dsh plugin --profile web add relay-dsh-plugin-codex
 ```
 
-npm 包名是 `@relay/dsh-plugin-codex`，但目前尚未发布到 npm。在 README
-明确列出 npm 版本前，请使用上面的 GitHub 安装命令。
+如需测试尚未发布的提交，可将包名替换为
+`github:yangbobo2021/relay-dsh-plugin-codex`。
 
 ### 3. 启动或重启 DSH Web
 
@@ -127,13 +128,13 @@ Monitor 和工作台扩展。
 
 ```bash
 # 检查插件为何被安装
-dsh plugin --profile web why @relay/dsh-plugin-codex
+dsh plugin --profile web why relay-dsh-plugin-codex
 
-# 更新 GitHub 依赖
-dsh plugin --profile web update @relay/dsh-plugin-codex
+# 更新 npm 依赖
+dsh plugin --profile web update relay-dsh-plugin-codex
 
 # 删除插件
-dsh plugin --profile web remove @relay/dsh-plugin-codex
+dsh plugin --profile web remove relay-dsh-plugin-codex
 ```
 
 如果没有持久安装 `dsh` 命令，请将命令开头的 `dsh` 替换为
@@ -144,7 +145,7 @@ dsh plugin --profile web remove @relay/dsh-plugin-codex
 ### 模式菜单中没有 Codex
 
 先重启 DSH Web，再执行 `dsh plugin --profile web why
-@relay/dsh-plugin-codex`。如果 pnpm 找不到插件，请重新执行 GitHub 安装命令，
+relay-dsh-plugin-codex`。如果 pnpm 找不到插件，请重新执行 npm 安装命令，
 并查看最后显示的错误。
 
 ### 第一条消息提示认证失败或找不到可执行文件
