@@ -1,92 +1,182 @@
-# Relay Codex Plugin for DeepSeek Harness
+# Codex Conversations for DeepSeek Harness
 
-Run native Codex conversations inside [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH).
-Each DSH Session owns one Codex App Server Thread, so Codex keeps its own model
-context and execution lifecycle while DSH provides the conversation UI.
+English | [中文](README.zh.md)
 
-This repository is developed as part of [Relay](https://github.com/yangbobo2021/Relay),
-an open-source project for long-running agent work, external events, DSH
-integrations, and composable agent backends. The plugin is independently
-installable: using it does not require the Relay application or any other Relay
-plugin.
+`@relay/dsh-plugin-codex` adds **Codex as a conversation backend** to the
+official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+(DSH) Web UI. After installation, **Codex** appears in DSH's New Session mode
+menu. One DSH Session is bound to one Codex App Server Thread.
 
-## What It Adds
+![Codex and Claude Code in the DSH New Session mode menu](docs/images/dsh-new-session-backends.jpg)
 
-- A **Codex** choice on DSH's native New Session screen.
-- One durable Codex App Server Thread for each Codex-backed DSH Session.
-- Model and reasoning-effort selection.
-- Approval and user-question flows in the DSH conversation.
-- Images, tool activity, interruption, and context continuation.
-- Generic access to tools contributed by other installed DSH plugins.
-- An optional Codex App Server terminal-provider contribution when the separate
-  Relay terminal plugin is installed.
+The screenshot was captured from official DSH `0.1.1-rc.2` with the Codex and
+Claude plugins installed. If you install only this plugin, only **Codex** is
+added.
 
-DSH tools are exposed to Codex under the App Server `dsh` namespace and execute
-through the owning Agent's DSH tool runtime. This plugin consumes the public DSH
-tool surface; it does not import or detect another plugin's implementation.
+## Do I Need This Plugin?
 
-## Requirements
+Install it when you want to:
 
-- Node.js 22.13 or newer.
-- A current DeepSeek Harness installation with the `web` profile.
-- `pnpm` on `PATH`, as required by DSH plugin management.
-- The Codex CLI installed and authenticated for the current user.
+- use Codex inside DSH instead of switching to a separate Codex interface;
+- keep DSH's native conversation history, composer, approvals, questions, and
+  tool presentation;
+- let one DSH Session continue the same Codex App Server Thread across turns;
+- use Codex models, reasoning effort, images, interruption, and DSH-contributed
+  tools in the same conversation.
 
-## Install
+You do not need it to use DSH's standard agents. It also does not add Relay
+Events, file browsing, or a terminal panel. Those are separate optional plugins.
 
-The plugin can be installed directly from GitHub today:
+## Quick Start With Official DSH
+
+The steps below were validated with:
+
+- DeepSeek Harness `0.1.1-rc.2`, commit
+  [`b150a551`](https://github.com/deepseek-ai/deepseek-harness/commit/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)
+- Node.js 22.13 or newer
+- `pnpm` available on `PATH`
+
+DSH is currently a developer preview and may introduce compatibility-breaking
+changes. This repository tracks official releases and records its tested version
+here.
+
+### 1. Prepare Codex authentication
+
+The plugin launches the local Codex CLI in App Server mode. Confirm that the CLI
+is available and authenticate it before starting your first DSH Codex session:
+
+```bash
+codex --version
+codex login
+```
+
+See the official [Codex authentication documentation](https://developers.openai.com/codex/auth/)
+for ChatGPT sign-in and API-key options. Credentials stay under Codex's normal
+local authentication mechanism; this plugin does not collect them.
+
+### 2. Install from GitHub
+
+Stop a running DSH Web process before changing Profile bundles. Then run:
+
+```bash
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex
+```
+
+The official DSH CLI initializes the `web` Profile if it does not exist, asks
+`pnpm` to install the repository, and adds the plugin's bundle layer. No Relay
+checkout is required.
+
+If you already installed the `dsh` command, the shorter equivalent is:
 
 ```bash
 dsh plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex
 ```
 
-Restart the running DSH Web profile after installation. Open **New Session** and
-choose **Codex**.
+The npm package name is `@relay/dsh-plugin-codex`, but it is not published yet.
+Use the GitHub command above until an npm release is listed in this README.
 
-The package name is `@relay/dsh-plugin-codex`. After an npm release is available,
-the equivalent registry installation is:
+### 3. Start or restart DSH Web
 
 ```bash
-dsh plugin --profile web add @relay/dsh-plugin-codex
+npx @deepseek-ai/dsh@0.1.1-rc.2 web
 ```
 
-Remove the plugin and restart the profile with:
+If you use an installed command, run `dsh web` instead. Bundle membership is read
+at startup, so restarting after installation, update, or removal is required.
+
+### 4. Start a Codex conversation
+
+1. Open the DSH URL printed in the terminal. The default is
+   `http://127.0.0.1:3080`.
+2. On first launch, read the DSH testing notice and select **Continue**.
+3. Select **Add workspace** in the left sidebar and choose the project directory
+   Codex may work in.
+4. Select **New Session**.
+5. Open the mode menu labeled **Standard mode** and choose **Codex**.
+6. Enter a message and send it. Choose the backend before the first message;
+   existing sessions keep the backend with which they were created.
+
+There is no separate activation command. A successful install plus a DSH restart
+activates the bundle and registers the managed **Codex** mode automatically.
+
+## What Works
+
+- One persistent Codex App Server Thread per DSH Session
+- Model and reasoning-effort selection
+- Streaming answers and reasoning in the native DSH conversation
+- DSH approval and user-question flows
+- Images, tool activity, interruption, and continuation
+- Generic DSH tools exposed under the Codex App Server `dsh` namespace
+- Optional terminal transport when the separate Relay terminal plugin is present
+
+Tools execute through the owning Agent's DSH tool runtime and remain subject to
+DSH permissions and Codex approval behavior.
+
+## Plugin Boundary and Relay
+
+This repository was designed and compatibility-tested in
+[Relay](https://github.com/yangbobo2021/Relay), an open-source project for
+long-running agent work, external-event delivery, reusable DSH workbench views,
+and multiple conversation backends.
+
+The plugin is independently installable. It has no runtime dependency on the
+Relay application, Relay Events, or another Relay plugin. It does not replace the
+official DSH layout or install Files and Terminal views. This separation lets a
+user install only Codex while the broader Relay project can compose Codex, Claude,
+events, waits, monitors, and workbench extensions when those capabilities are
+needed.
+
+Explore or star Relay to follow that broader work:
+<https://github.com/yangbobo2021/Relay>.
+
+## Update, Inspect, or Remove
+
+Stop DSH Web before changing the bundle, then restart it afterward.
 
 ```bash
+# Show why the plugin is installed
+dsh plugin --profile web why @relay/dsh-plugin-codex
+
+# Update the GitHub dependency
+dsh plugin --profile web update @relay/dsh-plugin-codex
+
+# Remove it
 dsh plugin --profile web remove @relay/dsh-plugin-codex
 ```
 
-## Plugin Boundary
+Use the `npx @deepseek-ai/dsh@0.1.1-rc.2` prefix instead of `dsh` when you do not
+have a persistent DSH command.
 
-This package owns only the Codex conversation backend and its small native DSH
-conversation surfaces. It has no runtime dependency on Relay Events or another
-Relay plugin. Installing it does not:
+## Troubleshooting
 
-- add Wait, Monitor, callback, or event-routing behavior;
-- replace the official DSH layout; or
-- install Files or Terminal views.
+### Codex is missing from the mode menu
 
-Those capabilities are optional, independently composed plugins. Relay Events can
-be installed when external events should resume conversations, while Relay's
-Workbench, Files, and Terminal plugins provide additional DSH Web surfaces. Codex
-works without any of them.
+Restart DSH Web. Then run `dsh plugin --profile web why
+@relay/dsh-plugin-codex`. If pnpm cannot find the package, repeat the GitHub
+installation command and read its final error.
 
-## Relationship to Relay
+### The first message reports an authentication or executable error
 
-[Relay](https://github.com/yangbobo2021/Relay) is the integration and compatibility
-home in which this plugin was designed and validated. Relay combines DSH
-conversations with durable waits, monitors, external-event delivery, reusable
-workbench views, and multiple agent backends. This repository is kept separate so
-Codex users can install only the backend they need and so the plugin can track
-official DSH releases without carrying the full Relay runtime.
+Run `codex --version` and `codex login` in the same user environment that starts
+DSH. Restart DSH after fixing `PATH` or authentication.
 
-Explore or star the Relay repository to follow the broader multi-backend DSH and
-long-running-agent work: <https://github.com/yangbobo2021/Relay>.
+### The composer is disabled
+
+DSH requires a workspace before starting a coding conversation. Select **Add
+workspace**, choose a directory, and return to **New Session**.
+
+### Installation says pnpm is missing
+
+Install pnpm using its [official installation guide](https://pnpm.io/installation)
+and confirm `pnpm --version` works in the same terminal.
+
+### DSH changed and the plugin no longer starts
+
+DSH is a developer preview. Include the output of `dsh --version`, the plugin
+source revision, and the startup error in a
+[GitHub issue](https://github.com/yangbobo2021/relay-dsh-plugin-codex/issues).
 
 ## Development
-
-Clone the plugin, install its development dependencies, and point verification at
-an official DSH checkout:
 
 ```bash
 git clone https://github.com/yangbobo2021/relay-dsh-plugin-codex.git
@@ -96,11 +186,10 @@ DSH_ROOT=/path/to/deepseek-harness npm run verify
 npm pack
 ```
 
-`npm run verify` runs type checking, tests, and the production build. The plugin's
-test suite includes independence and package-boundary checks so an accidental
-dependency on Relay or another feature plugin fails validation.
+`npm run verify` runs type checking, tests, and the production build. Boundary
+tests reject accidental runtime dependencies on Relay or another feature plugin.
 
-## Status and Feedback
+## Feedback
 
-The plugin is under active development. Report integration problems or feature
-requests in this repository's [issue tracker](https://github.com/yangbobo2021/relay-dsh-plugin-codex/issues).
+Report bugs and feature requests in this repository's
+[issue tracker](https://github.com/yangbobo2021/relay-dsh-plugin-codex/issues).
