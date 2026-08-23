@@ -3,4 +3,4 @@
 
 - insert:
     - id: relay-codex-host
-      name: '@relay/plugin-codex'
+      name: '@relay/dsh-plugin-codex'

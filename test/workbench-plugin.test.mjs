@@ -15,7 +15,7 @@ test("Codex owns terminal and workspace Remote contracts", () => {
   );
   assert.equal(CODEX_DESCRIPTORS.length, 7);
   for (const descriptor of CODEX_DESCRIPTORS) {
-    assert.match(descriptor.id, /^relay-plugin-codex#/);
+    assert.match(descriptor.id, /^relay-dsh-plugin-codex#/);
     assert.equal(descriptor.namespace, descriptor.service);
     assert.equal(descriptor.invocation.kind, "direct");
     assert.equal(descriptor.result.mode, "strict");
@@ -24,7 +24,7 @@ test("Codex owns terminal and workspace Remote contracts", () => {
 
 test("the Codex distributable contains only built artifacts and its preset", async () => {
   const manifest = JSON.parse(await readFile(join(pluginRoot, "package.json"), "utf8"));
-  assert.equal(manifest.name, "@relay/plugin-codex");
+  assert.equal(manifest.name, "@relay/dsh-plugin-codex");
   for (const artifact of ["cordis.patch.yml", "presets", "lib/client.js", "lib/host-plugin.js", "lib/typert.host.js"]) {
     assert.ok(manifest.files.includes(artifact), artifact);
   }
@@ -35,7 +35,7 @@ test("the Codex distributable contains only built artifacts and its preset", asy
 test("Codex replaces only the workbench layout extension surface", async () => {
   const patch = await readFile(join(pluginRoot, "cordis.patch.yml"), "utf8");
   assert.match(patch, /- id: ui-layout\n\s+disabled: true/);
-  assert.match(patch, /name: '@relay\/plugin-codex'/);
+  assert.match(patch, /name: '@relay\/dsh-plugin-codex'/);
   assert.doesNotMatch(patch, /relay-runtime-host|plugin-events/);
 });
 

@@ -1,11 +1,11 @@
 import { fileURLToPath } from "node:url";
-import { PluginHost } from "@relay/plugin-sdk";
+import { PluginHost } from "./internal/plugin-sdk.mjs";
 import { createCodexExecutionPlugin } from "./plugin.mjs";
 import { createDshCodexPlugin } from "./dsh-plugin.js";
 import { installManagedPreset } from "./preset.js";
 export { installCodexSessionEventType } from "./dsh-plugin.js";
 
-export const name = "relay-plugin-codex";
+export const name = "relay-dsh-plugin-codex";
 export const inject = [
   "agents", "attachments", "llm", "sessions", "sessionPersistence", "tools", "typert", "webServer",
 ];

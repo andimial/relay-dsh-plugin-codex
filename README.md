@@ -1,6 +1,6 @@
 # Relay Codex Plugin
 
-`@relay/plugin-codex` adds a Codex conversation mode to DeepSeek Harness. One DSH
+`@relay/dsh-plugin-codex` adds a Codex conversation mode to DeepSeek Harness. One DSH
 Session owns one Codex App Server Thread, including model and reasoning selection,
 approvals, questions, images, tool activity, interruption, context continuation,
 workspace files, and terminal surfaces.
@@ -13,14 +13,13 @@ the Codex App Server `dsh` namespace and execute through the owning Agent's DSH 
 runtime. This plugin does not import or detect their providers.
 
 ```bash
-dsh plugin --profile web add @relay/plugin-codex
+dsh plugin --profile web add @relay/dsh-plugin-codex
 ```
 
-The Codex CLI must be available and authenticated. Build and verify from Relay:
+The Codex CLI must be available and authenticated. Build and verify against an
+official DeepSeek Harness checkout:
 
 ```bash
-npm run prepare:dsh
-npm --workspace @relay/plugin-codex run typecheck
-npm --workspace @relay/plugin-codex run build
-npm run test:install:dsh-official
+DSH_ROOT=/path/to/deepseek-harness npm run verify
+npm pack
 ```

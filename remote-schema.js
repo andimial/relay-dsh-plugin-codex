@@ -23,13 +23,13 @@ const workspacePreview = z.object({
 });
 const parameter = (name, schema, symbol) => ({
   name, wire: name, source: "json",
-  codec: { mode: "strict", typeSymbol: `relay-plugin-codex#${symbol}`, schema },
+  codec: { mode: "strict", typeSymbol: `relay-dsh-plugin-codex#${symbol}`, schema },
 });
 const direct = (id, service, method, parameters, schema, symbol, options = {}) => ({
-  id: `relay-plugin-codex#${id}`, service, namespace: service, method,
+  id: `relay-dsh-plugin-codex#${id}`, service, namespace: service, method,
   invocation: { kind: "direct" }, parameters,
   ...(options.cancellation ? { cancellation: { parameter: "signal" } } : {}),
-  result: { mode: "strict", typeSymbol: `relay-plugin-codex#${symbol}`, schema },
+  result: { mode: "strict", typeSymbol: `relay-dsh-plugin-codex#${symbol}`, schema },
 });
 
 export const CODEX_DESCRIPTORS = [

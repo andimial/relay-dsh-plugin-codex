@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { KNOWN_SESSION_EVENT_TYPES } from "@deepseek-ai/dsh-session";
-import { definePlugin } from "@relay/plugin-sdk";
+import { definePlugin } from "./internal/plugin-sdk.mjs";
 import { CodexDshAdapter, CODEX_ACTIVITY_EVENT, CODEX_PROVIDER } from "./codex-adapter.js";
 import { RelayCodexTerminalGateway } from "./codex-terminal-gateway.js";
 import { CodexLinkStore } from "./codex-link-store.js";

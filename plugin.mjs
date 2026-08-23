@@ -1,4 +1,4 @@
-import { definePlugin } from "@relay/plugin-sdk";
+import { definePlugin } from "./internal/plugin-sdk.mjs";
 import { CodexAppServerClient, NATIVE_CODEX_APP_SERVER_ARGS } from "./app-server-client.mjs";
 import { CodexSessionRuntime } from "./session-runtime.mjs";
 
