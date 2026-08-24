@@ -1,8 +1,17 @@
 # 在 DeepSeek Harness 中使用 Codex 对话
 
+[![npm 版本](https://img.shields.io/npm/v/relay-dsh-plugin-codex?label=npm)](https://www.npmjs.com/package/relay-dsh-plugin-codex)
+[![CI](https://github.com/yangbobo2021/relay-dsh-plugin-codex/actions/workflows/ci.yml/badge.svg)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/actions/workflows/ci.yml)
+[![npm 月下载量](https://img.shields.io/npm/dm/relay-dsh-plugin-codex?label=downloads)](https://www.npmjs.com/package/relay-dsh-plugin-codex)
+[![GitHub Stars](https://img.shields.io/github/stars/yangbobo2021/relay-dsh-plugin-codex?style=flat)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/stargazers)
+[![MIT 许可证](https://img.shields.io/github/license/yangbobo2021/relay-dsh-plugin-codex)](LICENSE)
+[![DSH 兼容版本](https://img.shields.io/badge/DSH-0.1.1--rc.2-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
+[![npm 来源证明](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.1-rc.3)
+
 [English](README.md) | 中文
 
 **npm 包名：** [`relay-dsh-plugin-codex`](https://www.npmjs.com/package/relay-dsh-plugin-codex)
+· [全部 Relay DSH 插件](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/dsh-plugins.zh.md)
 
 `relay-dsh-plugin-codex` 为官方
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）Web
@@ -64,7 +73,7 @@ codex login
 修改 Profile 插件前，请先停止正在运行的 DSH Web，然后从以下来源中选择
 一种。
 
-#### npm 正式版（推荐）
+#### npm 正式版
 
 本插件发布到 npm 的正式包名是
 [`relay-dsh-plugin-codex`](https://www.npmjs.com/package/relay-dsh-plugin-codex)。
@@ -77,16 +86,17 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@
 本文更新时，`latest` 指向稳定版 `0.1.0`。最新版本请以链接中的 npm 页面
 为准。
 
-#### npm 预发布版
+#### npm 预发布版（DSH 预览阶段推荐）
 
 使用 `@next` 安装已经通过本仓库 CI 发布流程和官方 DSH 兼容性测试的最新
-候选版本：
+候选版本。当前候选版本还内置了跨平台 App Server 运行时，因此 DSH 不依赖
+系统全局的 `codex` 可执行文件：
 
 ```bash
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-本候选版本发布后，`next` 将指向 `0.1.1-rc.3`。
+本文更新时，`next` 指向 `0.1.1-rc.3`。
 
 #### GitHub 开发版
 
