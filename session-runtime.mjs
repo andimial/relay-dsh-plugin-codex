@@ -1,10 +1,14 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const RELAY_THREAD_SOURCE = "relay.codex";
 const DEFAULT_MULTI_AGENT_MODE = "explicitRequestOnly";
+const IMPORT_THREAD_SOURCE_KINDS = Object.freeze([
+  "cli", "vscode", "exec", "appServer", "unknown",
+]);
 
 export class CodexSessionRuntime extends EventEmitter {
   constructor({
@@ -40,19 +44,14 @@ export class CodexSessionRuntime extends EventEmitter {
         this.addDiagnostic(`account/read failed: ${error.message}`);
         return null;
       }),
-      this.client.request("thread/list", {
-        limit: 100,
-        sortKey: "updated_at",
-        sortDirection: "desc",
-        cwd: this.cwd,
-      }).catch((error) => {
+      this.listWorkspaceThreads({ cwd: this.cwd }).catch((error) => {
         this.addDiagnostic(`thread/list failed: ${error.message}`);
-        return { data: [] };
+        return [];
       }),
     ]);
     this.models = modelsResult.data ?? [];
     this.account = accountResult;
-    for (const thread of (threadsResult.data ?? []).filter(
+    for (const thread of threadsResult.filter(
       (candidate) => candidate.threadSource === RELAY_THREAD_SOURCE,
     )) {
       const defaults = this.defaultSessionSettings(thread.cwd);
@@ -61,6 +60,62 @@ export class CodexSessionRuntime extends EventEmitter {
     }
     this.emitChange();
     return this.snapshot();
+  }
+
+  async listWorkspaceThreads({
+    cwd = this.cwd,
+    archived = false,
+    sourceKinds = IMPORT_THREAD_SOURCE_KINDS,
+  } = {}) {
+    if (typeof cwd !== "string" || !cwd.trim()) throw new Error("Workspace cwd is required");
+    const canonicalWorkspace = await canonicalPath(cwd);
+    const canonicalCwds = new Map();
+    const threads = [];
+    const seenThreadIds = new Set();
+    const seenCursors = new Set();
+    let cursor = null;
+
+    do {
+      const result = await this.client.request("thread/list", {
+        cursor,
+        limit: 100,
+        sortKey: "updated_at",
+        sortDirection: "desc",
+        cwd,
+        archived: Boolean(archived),
+        sourceKinds: [...sourceKinds],
+      });
+      for (const thread of result.data ?? []) {
+        if (!validInventoryThread(thread) || thread.ephemeral || seenThreadIds.has(thread.id)) continue;
+        let canonicalCwd = canonicalCwds.get(thread.cwd);
+        if (canonicalCwd === undefined) {
+          canonicalCwd = await canonicalPath(thread.cwd);
+          canonicalCwds.set(thread.cwd, canonicalCwd);
+        }
+        if (canonicalCwd !== canonicalWorkspace) continue;
+        seenThreadIds.add(thread.id);
+        threads.push(structuredClone(thread));
+      }
+      cursor = result.nextCursor ?? null;
+      if (cursor !== null) {
+        if (seenCursors.has(cursor)) throw new Error(`thread/list repeated cursor ${cursor}`);
+        seenCursors.add(cursor);
+      }
+    } while (cursor !== null);
+
+    return threads;
+  }
+
+  async readThread(threadId, { includeTurns = true } = {}) {
+    if (typeof threadId !== "string" || !threadId.trim()) throw new Error("threadId is required");
+    const result = await this.client.request("thread/read", {
+      threadId,
+      includeTurns: Boolean(includeTurns),
+    });
+    if (!result?.thread || result.thread.id !== threadId) {
+      throw new Error(`thread/read returned no matching Codex thread for ${threadId}`);
+    }
+    return structuredClone(result.thread);
   }
 
   async createSession({
@@ -665,4 +720,23 @@ function sameThreadSettings(left, right) {
 function summarizeTitle(text) {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length > 54 ? `${normalized.slice(0, 53)}...` : normalized;
+}
+
+function validInventoryThread(thread) {
+  return thread !== null
+    && typeof thread === "object"
+    && typeof thread.id === "string"
+    && thread.id.trim().length > 0
+    && typeof thread.cwd === "string"
+    && thread.cwd.trim().length > 0;
+}
+
+async function canonicalPath(value) {
+  const absolute = resolve(value);
+  try {
+    return await realpath(absolute);
+  } catch (error) {
+    if (error?.code === "ENOENT") return absolute;
+    throw error;
+  }
 }

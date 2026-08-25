@@ -1,0 +1,201 @@
+.trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.trigger:hover {
+  background: var(--dsw-alias-fill-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: -2px;
+}
+
+.trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.body {
+  display: flex;
+  min-height: 128px;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.workspace {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  padding-bottom: 12px;
+}
+
+.workspace strong {
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 20px;
+}
+
+.workspace span {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+.message,
+.error,
+.success,
+.partial {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0;
+  line-height: 20px;
+}
+
+.message {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.error,
+.dangerValue {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.success,
+.accentValue {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.partial {
+  color: var(--dsw-alias-state-error-secondary);
+}
+
+.metrics {
+  display: grid;
+  margin: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  border-left: 1px solid var(--dsw-alias-border-l2);
+}
+
+.metric {
+  min-width: 0;
+  border-right: 1px solid var(--dsw-alias-border-l2);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  padding: 10px 12px;
+}
+
+.metric dt {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  letter-spacing: 0;
+  line-height: 16px;
+}
+
+.metric dd {
+  margin: 2px 0 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 24px;
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.progressCopy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  letter-spacing: 0;
+  line-height: 20px;
+}
+
+.progressCopy strong {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.progress progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--dsw-alias-state-business-primary);
+}
+
+.failures {
+  display: flex;
+  margin: 14px 0 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.failures li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 10px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  letter-spacing: 0;
+  line-height: 18px;
+}
+
+.failures code,
+.failures span {
+  overflow-wrap: anywhere;
+}
+
+.failures code {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+@media (max-width: 520px) {
+  .dialog {
+    width: calc(100vw - 20px);
+  }
+
+  .metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

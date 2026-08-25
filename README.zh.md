@@ -34,7 +34,7 @@ MP4](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/medi
 以下情况适合安装：
 
 - 希望直接在 DSH 中使用 Codex，而不必切换到单独的 Codex 界面；
-- 希望保留 DSH 原生的对话历史、输入框、审批、提问和工具展示；
+- 希望保留 DSH 原生的对话历史、输入框、审批和提问；
 - 希望一个 DSH Session 在多轮对话中持续使用同一个 Codex App Server
   Thread；
 - 希望在同一对话中使用 Codex 模型、reasoning effort、图片、中断以及 DSH
@@ -146,13 +146,31 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 web
 插件不需要单独的激活命令。安装成功并重启 DSH 后，Bundle 会自动激活，
 并注册由插件管理的 **Codex** 模式。
 
+### 5. 导入 Workspace 中已有的 Codex 会话
+
+1. 在 DSH 中打开目标 Workspace 或其中任一 Session。
+2. 点击 Workspace 列表下方、Settings 上方的 **导入 Codex 会话**。
+3. 查看汇总扫描结果，然后点击 **全部导入**。
+4. 确认导入的 Session 已直接显示 Codex 标题并按源活动时间排列，然后打开
+   任一 Session 继续对话。
+
+首版按整个 Workspace 导入，不提供逐 Thread 勾选。标题和最后活动时间在打开
+Session 前就必须可用；批量导入时间不会覆盖 Codex inventory 的
+`thread/list.updatedAt` 顺序。Codex App Server 继续负责
+模型上下文、工具状态和压缩；DSH 只保存原生用户/助手展示历史以及一对一绑定，
+不会复制 Codex 私有运行记录。每次打开已导入的 Session 时，插件会读取一次对应
+的 Codex Thread，并将尚未显示的终态用户/助手 Turn 追加到 DSH 展示历史，其中
+包括存在可见消息的 `interrupted` 和 `failed` Turn。只有 `inProgress` Turn 会等到
+下次打开。Session 保持打开时不会后台轮询，也不会在发送消息时同步或增加手动
+刷新入口。
+
 ## 支持的能力
 
 - 每个 DSH Session 持续绑定一个 Codex App Server Thread
 - 模型和 reasoning effort 选择
 - 在 DSH 原生对话中流式显示回答和 reasoning
 - DSH 原生审批和用户提问流程
-- 图片、工具活动、中断和会话延续
+- 图片、中断和会话延续
 - 在 Codex App Server 的 `dsh` namespace 中提供通用 DSH 工具
 - 安装独立 Relay 终端插件后，可选贡献终端传输 Provider
 
@@ -227,6 +245,15 @@ DSH Bundle 配置项 `codexCommand` 的优先级高于 `RELAY_CODEX_COMMAND`。�
 
 DSH 在开始编码对话前必须选择工作区。点击 **Add workspace**，选择一个目录，
 然后返回 **New Session**。
+
+### 导入的 Session 提示 Codex Thread 正在被其他客户端使用
+
+Codex 只允许一个 App Server 写入同一 Thread。在 Codex Desktop 中切换到其他
+Thread 后，原 App Server 进程仍可能继续持有 writer。请完整退出或重启占用它的
+Codex App、CLI 或 App Server 进程，然后在 DSH 中重试。插件会保留原有的一对一
+绑定，绝不会创建替代 Thread。App Server 协议目前没有安全的强制接管操作。
+打开 Session 时仍可通过 `thread/read` 同步终态展示历史；writer 所有权
+只会阻止继续提交消息。
 
 ### 安装时提示找不到 pnpm
 

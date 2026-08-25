@@ -21,6 +21,23 @@ export class CodexLinkStore {
     this.persist();
   }
 
+  replace(oldSessionId, newSessionId, record) {
+    const oldKey = String(oldSessionId);
+    const newKey = String(newSessionId);
+    const previousOld = this.records.get(oldKey);
+    const previousNew = this.records.get(newKey);
+    this.records.delete(oldKey);
+    this.records.set(newKey, structuredClone(record));
+    try {
+      this.persist();
+    } catch (error) {
+      this.records.delete(newKey);
+      if (previousOld !== undefined) this.records.set(oldKey, previousOld);
+      if (previousNew !== undefined) this.records.set(newKey, previousNew);
+      throw error;
+    }
+  }
+
   persist() {
     mkdirSync(dirname(this.path), { recursive: true });
     const temporary = `${this.path}.${process.pid}.tmp`;
@@ -44,7 +61,14 @@ function loadRecords(path) {
 function validRecord(record) {
   return isObject(record)
     && (record.threadId === null || typeof record.threadId === "string")
-    && isObject(record.config);
+    && isObject(record.config)
+    && (record.dshTurnIds === undefined || validStringArray(record.dshTurnIds));
+}
+
+function validStringArray(value) {
+  return Array.isArray(value)
+    && value.every(item => typeof item === "string" && item.length > 0)
+    && new Set(value).size === value.length;
 }
 
 function isObject(value) {

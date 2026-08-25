@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { CodexSessionRuntime } from "../session-runtime.mjs";
@@ -204,6 +207,81 @@ test("only Relay-owned Codex threads are discovered and can be resumed after res
   await second.close();
 });
 
+test("Workspace inventory paginates with explicit source kinds and enforces canonical cwd boundaries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-codex-inventory-"));
+  const workspace = join(root, "workspace");
+  const alias = join(root, "workspace-alias");
+  const sibling = join(root, "workspace-other");
+  const child = join(workspace, "child");
+  const client = new PagedInventoryClient({ workspace, sibling, child });
+  try {
+    await Promise.all([
+      mkdir(child, { recursive: true }),
+      mkdir(sibling, { recursive: true }),
+    ]);
+    await symlink(workspace, alias);
+    const runtime = new CodexSessionRuntime({ client, cwd: alias });
+    await runtime.initialize();
+    client.requests.length = 0;
+
+    const threads = await runtime.listWorkspaceThreads({ cwd: alias });
+
+    assert.deepEqual(threads.map(thread => thread.id), ["thread-exact", "thread-alias"]);
+    const listRequests = client.requests.filter(request => request.method === "thread/list");
+    assert.equal(listRequests.length, 2);
+    assert.equal(listRequests[0].params.cursor, null);
+    assert.equal(listRequests[1].params.cursor, "page-2");
+    assert.equal(listRequests[0].params.archived, false);
+    assert.deepEqual(listRequests[0].params.sourceKinds, [
+      "cli", "vscode", "exec", "appServer", "unknown",
+    ]);
+    assert.equal(listRequests[0].params.cwd, alias);
+    await runtime.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Workspace inventory rejects missing cwd and repeated App Server cursors", async () => {
+  const client = new RepeatingCursorClient();
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+
+  await assert.rejects(runtime.listWorkspaceThreads({ cwd: " " }), /Workspace cwd is required/);
+  await assert.rejects(
+    runtime.listWorkspaceThreads({ cwd: "/workspace/relay" }),
+    /thread\/list repeated cursor loop/,
+  );
+  assert.equal(client.requests.filter(request => request.method === "thread/list").length, 2);
+});
+
+test("historical hydration reads turns without resuming or starting the Codex Thread", async () => {
+  const client = new FakeCodexClient();
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+  await runtime.initialize();
+  const source = client.thread("existing-thread", "/workspace/relay");
+  source.turns.push({
+    id: "turn-old",
+    status: "completed",
+    items: [
+      { type: "userMessage", id: "user-old", content: [{ type: "text", text: "old question" }] },
+      { type: "agentMessage", id: "answer-old", text: "old answer", phase: "final_answer" },
+    ],
+  });
+  client.threads.set(source.id, source);
+  client.requests.length = 0;
+
+  const read = await runtime.readThread(source.id);
+
+  assert.equal(read.id, source.id);
+  assert.equal(read.turns.length, 1);
+  assert.deepEqual(client.requests, [{
+    method: "thread/read",
+    params: { threadId: source.id, includeTurns: true },
+  }]);
+  assert.equal(runtime.getSession(source.id), null);
+  await runtime.close();
+});
+
 test("ephemeral auxiliary threads carry isolated instructions and are released", async () => {
   const client = new FakeCodexClient();
   const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
@@ -268,6 +346,7 @@ class FakeCodexClient extends EventEmitter {
       return { thread: structuredClone(thread) };
     }
     if (method === "thread/resume") return { thread: structuredClone(this.threads.get(params.threadId)) };
+    if (method === "thread/read") return { thread: structuredClone(this.threads.get(params.threadId)) };
     if (method === "thread/settings/update") return {};
     if (method === "turn/start") return this.startTurn(params);
     if (method === "turn/interrupt") return {};
@@ -299,6 +378,61 @@ class FakeCodexClient extends EventEmitter {
     const now = Date.now() / 1000;
     return { id, sessionId: id, name: null, preview: "", cwd, status: { type: "idle" }, createdAt: now, updatedAt: now, turns: [] };
   }
+}
+
+class PagedInventoryClient extends FakeCodexClient {
+  constructor({ workspace, sibling, child }) {
+    super();
+    this.workspace = workspace;
+    this.sibling = sibling;
+    this.child = child;
+  }
+
+  async request(method, params = {}) {
+    if (method !== "thread/list") return super.request(method, params);
+    this.requests.push({ method, params: structuredClone(params) });
+    if (params.cursor === "page-2") {
+      return {
+        data: [
+          inventoryThread("thread-alias", this.workspace, 20),
+          inventoryThread("thread-exact", this.workspace, 10),
+          inventoryThread("thread-child", this.child, 9),
+          { ...inventoryThread("thread-ephemeral", this.workspace, 8), ephemeral: true },
+        ],
+        nextCursor: null,
+      };
+    }
+    return {
+      data: [
+        inventoryThread("thread-exact", this.workspace, 10),
+        inventoryThread("thread-sibling", this.sibling, 7),
+      ],
+      nextCursor: "page-2",
+    };
+  }
+}
+
+class RepeatingCursorClient extends FakeCodexClient {
+  async request(method, params = {}) {
+    if (method !== "thread/list") return super.request(method, params);
+    this.requests.push({ method, params: structuredClone(params) });
+    return { data: [], nextCursor: "loop" };
+  }
+}
+
+function inventoryThread(id, cwd, updatedAt) {
+  return {
+    id,
+    sessionId: id,
+    name: null,
+    preview: id,
+    cwd,
+    status: { type: "idle" },
+    createdAt: 1,
+    updatedAt,
+    turns: [],
+    ephemeral: false,
+  };
 }
 
 function model() {

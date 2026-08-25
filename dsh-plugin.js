@@ -1,10 +1,14 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { KNOWN_SESSION_EVENT_TYPES } from "@deepseek-ai/dsh-session";
 import { definePlugin } from "./internal/plugin-sdk.mjs";
-import { CodexDshAdapter, CODEX_ACTIVITY_EVENT, CODEX_PROVIDER } from "./codex-adapter.js";
+import { CodexDshAdapter, CODEX_PROVIDER } from "./codex-adapter.js";
+import { CodexWorkspaceImporter } from "./codex-import.mjs";
+import { CodexHistorySynchronizer } from "./codex-history-sync.mjs";
+import { registerCodexImportRoute } from "./codex-import-route.js";
+import { registerCodexSyncRoute } from "./codex-sync-route.js";
 import { CodexLinkStore } from "./codex-link-store.js";
 import { CODEX_APP_DYNAMIC_TOOLS, handleCodexServerRequest } from "./codex-tools.js";
+import { DshCodexImportTarget } from "./dsh-import-target.js";
 
 export function createDshCodexPlugin(ctx, config = {}) {
   return definePlugin({
@@ -16,17 +20,33 @@ export function createDshCodexPlugin(ctx, config = {}) {
       permissions: ["dsh:llm", "dsh:agents", "dsh:web-server"],
     },
     async activate({ capabilities, defer }) {
-      installCodexSessionEventType();
       const runtime = capabilities.require("relay.execution.codex.v1");
       const terminal = capabilities.optional("relay.terminal.codex.v1");
       const resolveAgent = createAgentLookup(ctx);
+      const linkStore = new CodexLinkStore(resolveLinkPath(config.codexLinkPath));
       const adapter = new CodexDshAdapter({
         runtime, ready: runtime.whenReady(),
-        linkStore: new CodexLinkStore(resolveLinkPath(config.codexLinkPath)),
+        linkStore,
         attachments: ctx.attachments, logger: ctx.logger,
         dynamicTools: CODEX_APP_DYNAMIC_TOOLS,
       });
+      const target = new DshCodexImportTarget({ ctx, runtime, adapter, logger: ctx.logger });
+      const importer = new CodexWorkspaceImporter({
+        runtime,
+        adapter,
+        target,
+        logger: ctx.logger,
+      });
+      const synchronizer = new CodexHistorySynchronizer({ adapter, target });
       defer(ctx.llm.registerAdapter([CODEX_PROVIDER], adapter));
+      defer(registerCodexImportRoute(ctx, {
+        importer,
+        token: config.codexImportToken ?? process.env.RELAY_CODEX_IMPORT_TOKEN,
+      }));
+      defer(registerCodexSyncRoute(ctx, {
+        synchronizer,
+        token: config.codexImportToken ?? process.env.RELAY_CODEX_IMPORT_TOKEN,
+      }));
       defer(runtime.subscribeRequest((request) => {
         void handleCodexServerRequest(ctx, { adapter, runtime, request })
           .catch(error => ctx.logger.error(`Relay failed to handle a Codex interaction: ${error?.stack ?? error}`));
@@ -47,12 +67,6 @@ export function createDshCodexPlugin(ctx, config = {}) {
       return { capabilities: { "relay.dsh.codex.v1": Object.freeze({ provider: CODEX_PROVIDER }) } };
     },
   });
-}
-
-export function installCodexSessionEventType() {
-  if (KNOWN_SESSION_EVENT_TYPES.has(CODEX_ACTIVITY_EVENT)) return;
-  if (typeof KNOWN_SESSION_EVENT_TYPES.add !== "function") throw new Error("This DSH build cannot register Relay Codex session events");
-  KNOWN_SESSION_EVENT_TYPES.add(CODEX_ACTIVITY_EVENT);
 }
 
 function registerOptionalTerminalProvider(ctx, defer, terminal) {

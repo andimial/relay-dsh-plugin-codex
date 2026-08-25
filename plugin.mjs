@@ -52,6 +52,14 @@ function executionCapability(runtime, ready) {
       if (session) Object.assign(session, structuredClone(patch));
       return Boolean(session);
     },
+    async listWorkspaceThreads(...args) {
+      await ready;
+      return runtime.listWorkspaceThreads(...args);
+    },
+    async readThread(...args) {
+      await ready;
+      return runtime.readThread(...args);
+    },
     createSession: runtime.createSession.bind(runtime),
     resumeSession: runtime.resumeSession.bind(runtime),
     sendMessage: runtime.sendMessage.bind(runtime),

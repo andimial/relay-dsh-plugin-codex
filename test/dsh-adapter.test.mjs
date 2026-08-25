@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { CodexDshAdapter, CODEX_ACTIVITY_EVENT } from "../codex-adapter.js";
+import {
+  CODEX_THREAD_ACTIVE_WRITER,
+  CodexDshAdapter,
+} from "../codex-adapter.js";
 import { allowedRealPath, importCodexGeneratedImage, importCodexImage } from "../codex-image.js";
 import { CodexLinkStore } from "../codex-link-store.js";
 import { CODEX_APP_DYNAMIC_TOOLS, handleCodexServerRequest } from "../codex-tools.js";
 
-import { installCodexSessionEventType } from "../host-plugin.js";
 
 test("the Codex preset streams reasoning and answers into the native DSH conversation", async () => {
   const runtime = new FakeRuntime();
@@ -35,8 +37,8 @@ test("the Codex preset streams reasoning and answers into the native DSH convers
   assert.equal(chunks.find(chunk => chunk.type === "reasoning-delta").text, "Checked the workspace.");
   assert.equal(chunks.find(chunk => chunk.type === "text-delta").text, "done");
   assert.equal(chunks.at(-1).replayState.threadId, "thread-1");
-  assert.equal(agent.appended.filter(event => event.type === CODEX_ACTIVITY_EVENT).length, 2);
-  assert.equal(agent.appended.at(-1).data.activity.output, "ok\n");
+  assert.deepEqual([...adapter.ownedTurnIdsForSession(agent.id)], []);
+  assert.deepEqual(agent.appended, []);
   assert.equal(runtime.createdConfig.dynamicTools.some(tool => tool.name === "relay_wait_for_event"), false);
   const codexAppTools = runtime.createdConfig.dynamicTools.find(tool => tool.type === "namespace" && tool.name === "codex_app");
   assert.deepEqual(codexAppTools.tools.map(tool => tool.name), ["load_workspace_dependencies"]);
@@ -186,7 +188,7 @@ test("automatic title generation uses an isolated ephemeral Codex thread", async
   assert.deepEqual(runtime.released, [titleCall.threadId]);
   assert.equal(mainChunks.find(chunk => chunk.type === "text-delta").text, "done");
   assert.equal(titleChunks.find(chunk => chunk.type === "text-delta").text, "项目文件查询");
-  assert.equal(agent.appended.filter(event => event.type === CODEX_ACTIVITY_EVENT).length, 2);
+  assert.deepEqual(agent.appended, []);
 });
 
 test("an unrelated DSH plugin message cannot enter the main Codex thread", async () => {
@@ -284,6 +286,200 @@ test("DSH-to-Codex links and configuration survive host restart", async (context
   assert.equal(second.configuration("dsh-1").sandbox, "read-only");
   assert.equal(secondRuntime.created, 0);
   assert.equal(secondRuntime.resumed, 1);
+});
+
+test("imported bindings are one-to-one, durable, and never replace a failed resume", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-import-links-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "links.json");
+  const firstRuntime = new FailingResumeRuntime();
+  const first = new CodexDshAdapter({
+    runtime: firstRuntime,
+    ready: Promise.resolve(),
+    linkStore: new CodexLinkStore(path),
+  });
+  const binding = first.bindImportedThread("dsh-import-1", "codex-existing-1", {
+    model: "codex-test",
+    effort: "medium",
+    sandbox: "workspace-write",
+    approvalPolicy: "on-request",
+    cwd: "/workspace/relay",
+  });
+
+  assert.equal(binding.sessionId, "dsh-import-1");
+  assert.equal(binding.threadId, "codex-existing-1");
+  assert.equal(binding.importState, "reserved");
+  assert.deepEqual(first.bindImportedThread("dsh-import-1", "codex-existing-1", binding.config), binding);
+  assert.throws(
+    () => first.bindImportedThread("dsh-import-2", "codex-existing-1", binding.config),
+    /already bound to DSH session dsh-import-1/,
+  );
+  assert.throws(
+    () => first.bindImportedThread("dsh-import-1", "codex-existing-2", binding.config),
+    /already bound to Codex thread codex-existing-1/,
+  );
+  assert.throws(() => first.markImportState("dsh-import-1", "not-a-state"), /unknown Codex import state/);
+  assert.deepEqual(first.markImportState("dsh-import-1", "committed"), {
+    ...binding,
+    importState: "committed",
+  });
+  assert.equal(first.markImportState("dsh-import-1", "hydrated").importState, "committed");
+  await assert.rejects(first.ensureThread("dsh-import-1"), (error) => {
+    assert.equal(error.code, CODEX_THREAD_ACTIVE_WRITER);
+    assert.equal(error.retryable, true);
+    assert.equal(error.threadId, "codex-existing-1");
+    assert.match(error.message, /Switching Sessions may not release this process-level writer/);
+    assert.match(error.message, /Fully quit or restart the owning Codex app, CLI, or App Server process/);
+    assert.match(error.message, /did not create a replacement/);
+    return true;
+  });
+  assert.equal(firstRuntime.created, 0);
+  assert.equal(first.threadFor("dsh-import-1"), "codex-existing-1");
+
+  const persisted = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(persisted.sessions["dsh-import-1"].bindingMode, "imported");
+  assert.equal(persisted.sessions["dsh-import-1"].importState, "committed");
+
+  const secondRuntime = new FailingResumeRuntime();
+  const second = new CodexDshAdapter({
+    runtime: secondRuntime,
+    ready: Promise.resolve(),
+    linkStore: new CodexLinkStore(path),
+  });
+  await assert.rejects(second.ensureThread("dsh-import-1"), {
+    code: CODEX_THREAD_ACTIVE_WRITER,
+    retryable: true,
+    threadId: "codex-existing-1",
+  });
+  assert.equal(secondRuntime.created, 0);
+  assert.equal(second.bindingForThread("codex-existing-1").importState, "committed");
+});
+
+test("an imported active-writer conflict retries the same Thread after owner release", async () => {
+  const runtime = new ActiveThenResumeRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  adapter.bindImportedThread("dsh-import-retry", "codex-existing-retry", {
+    cwd: "/workspace/relay",
+  });
+  adapter.markImportState("dsh-import-retry", "committed");
+
+  await assert.rejects(adapter.ensureThread("dsh-import-retry"), {
+    code: CODEX_THREAD_ACTIVE_WRITER,
+    retryable: true,
+  });
+  assert.equal(await adapter.ensureThread("dsh-import-retry"), "codex-existing-retry");
+  assert.equal(runtime.resumed, 2);
+  assert.equal(runtime.created, 0);
+  assert.equal(adapter.threadFor("dsh-import-retry"), "codex-existing-retry");
+});
+
+test("DSH-owned Codex Turn IDs survive adapter restart", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-owned-turns-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "links.json");
+  const first = new CodexDshAdapter({
+    runtime: new FakeRuntime(),
+    ready: Promise.resolve(),
+    linkStore: new CodexLinkStore(path),
+  });
+  first.bindImportedThread("dsh-owned-turns", "codex-owned-turns", { cwd: "/workspace/relay" });
+  first.recordOwnedTurn("dsh-owned-turns", "turn-b");
+  first.recordOwnedTurn("dsh-owned-turns", "turn-a");
+
+  const persisted = JSON.parse(await readFile(path, "utf8"));
+  assert.deepEqual(persisted.sessions["dsh-owned-turns"].dshTurnIds, ["turn-a", "turn-b"]);
+  const second = new CodexDshAdapter({
+    runtime: new FakeRuntime(),
+    ready: Promise.resolve(),
+    linkStore: new CodexLinkStore(path),
+  });
+  assert.deepEqual([...second.ownedTurnIdsForSession("dsh-owned-turns")].sort(), ["turn-a", "turn-b"]);
+});
+
+test("an imported binding can move to a rebuilt DSH Session", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-rebuilt-links-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "links.json");
+  const first = new CodexDshAdapter({
+    runtime: new FakeRuntime(),
+    ready: Promise.resolve(),
+    linkStore: new CodexLinkStore(path),
+  });
+  first.bindImportedThread("dsh-old", "codex-thread-rebuild", { cwd: "/workspace/relay" });
+  first.markImportState("dsh-old", "committed");
+  first.recordOwnedTurn("dsh-old", "owned-turn");
+
+  const moved = first.replaceImportedSession("dsh-old", "dsh-new");
+
+  assert.equal(moved.sessionId, "dsh-new");
+  assert.equal(moved.threadId, "codex-thread-rebuild");
+  assert.equal(moved.importState, "committed");
+  assert.equal(first.bindingForSession("dsh-old"), null);
+  assert.equal(first.bindingForThread("codex-thread-rebuild").sessionId, "dsh-new");
+  assert.deepEqual([...first.ownedTurnIdsForSession("dsh-new")], ["owned-turn"]);
+
+  const persisted = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(persisted.sessions["dsh-old"], undefined);
+  assert.equal(persisted.sessions["dsh-new"].threadId, "codex-thread-rebuild");
+  assert.equal(persisted.sessions["dsh-new"].bindingMode, "imported");
+  assert.equal(persisted.sessions["dsh-new"].importState, "committed");
+
+  const second = new CodexDshAdapter({
+    runtime: new FakeRuntime(),
+    ready: Promise.resolve(),
+    linkStore: new CodexLinkStore(path),
+  });
+  assert.equal(second.bindingForThread("codex-thread-rebuild").sessionId, "dsh-new");
+  assert.deepEqual([...second.ownedTurnIdsForSession("dsh-new")], ["owned-turn"]);
+});
+
+test("a failed persisted binding replacement leaves the old imported binding intact", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-rebuilt-rollback-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "links.json");
+  const linkStore = new CodexLinkStore(path);
+  const adapter = new CodexDshAdapter({
+    runtime: new FakeRuntime(),
+    ready: Promise.resolve(),
+    linkStore,
+  });
+  adapter.bindImportedThread("dsh-old", "codex-thread-rebuild", { cwd: "/workspace/relay" });
+  adapter.markImportState("dsh-old", "committed");
+  adapter.recordOwnedTurn("dsh-old", "owned-turn");
+  linkStore.replace = () => { throw new Error("simulated persistence failure"); };
+  linkStore.delete = () => { throw new Error("non-atomic delete attempted"); };
+
+  assert.throws(
+    () => adapter.replaceImportedSession("dsh-old", "dsh-new"),
+    /simulated persistence failure|non-atomic delete attempted/,
+  );
+  assert.equal(adapter.bindingForSession("dsh-old").threadId, "codex-thread-rebuild");
+  assert.equal(adapter.bindingForSession("dsh-new"), null);
+  assert.deepEqual([...adapter.ownedTurnIdsForSession("dsh-old")], ["owned-turn"]);
+
+  const persisted = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(persisted.sessions["dsh-old"].threadId, "codex-thread-rebuild");
+  assert.equal(persisted.sessions["dsh-new"], undefined);
+});
+
+test("an imported Session records Codex Turns started through DSH", async () => {
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  adapter.bindImportedThread("dsh-import-stream", "codex-import-stream", { cwd: "/workspace/relay" });
+  adapter.markImportState("dsh-import-stream", "committed");
+  const agent = fakeAgent({ id: "dsh-import-stream" });
+  adapter.attachAgent(agent);
+
+  await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [
+      { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "continue" }] },
+    ],
+  }));
+
+  assert.deepEqual([...adapter.ownedTurnIdsForSession(agent.id)], ["turn-1"]);
 });
 
 test("concurrent first messages create one Codex thread", async () => {
@@ -522,11 +718,6 @@ test("Relay exposes only the executable Codex app workspace dependency tool", as
   assert.match(runtime.dynamic.at(-1).text, /Unsupported Codex app tool read_thread_terminal/);
 });
 
-test("DSH accepts durable Codex activity", async () => {
-  installCodexSessionEventType();
-  assert.equal(true, true);
-});
-
 class FakeRuntime extends EventEmitter {
   constructor() {
     super();
@@ -596,6 +787,21 @@ class FakeRuntime extends EventEmitter {
   }
 }
 
+class FailingResumeRuntime extends FakeRuntime {
+  async resumeSession() {
+    this.resumed += 1;
+    throw new Error("thread already has an active writer");
+  }
+}
+
+class ActiveThenResumeRuntime extends FakeRuntime {
+  async resumeSession(threadId, config) {
+    if (this.resumed++ === 0) throw new Error("thread already has an active writer");
+    this.sessions.set(threadId, { id: threadId, turns: [], ...config });
+    return this.sessions.get(threadId);
+  }
+}
+
 class InteractionRuntime {
   constructor() { this.dynamic = []; this.resolved = []; this.rejected = []; }
   respondDynamicTool(id, success, text) { this.dynamic.push({ id, success, text }); }
@@ -603,10 +809,10 @@ class InteractionRuntime {
   rejectRequest(id, error) { this.rejected.push({ id, error }); }
 }
 
-function fakeAgent({ tools = null } = {}) {
+function fakeAgent({ id = "dsh-1", tools = null } = {}) {
   const appended = [];
   return {
-    id: "dsh-1",
+    id,
     appended,
     ctx: tools ? { tools } : {},
     session: {

@@ -35,8 +35,7 @@ added.
 Install it when you want to:
 
 - use Codex inside DSH instead of switching to a separate Codex interface;
-- keep DSH's native conversation history, composer, approvals, questions, and
-  tool presentation;
+- keep DSH's native conversation history, composer, approvals, and questions;
 - let one DSH Session continue the same Codex App Server Thread across turns;
 - use Codex models, reasoning effort, images, interruption, and DSH-contributed
   tools in the same conversation.
@@ -155,13 +154,34 @@ at startup, so restarting after installation, update, or removal is required.
 There is no separate activation command. A successful install plus a DSH restart
 activates the bundle and registers the managed **Codex** mode automatically.
 
+### 5. Import existing Codex sessions for a Workspace
+
+1. Open the target Workspace or one of its Sessions in DSH.
+2. Select **Import Codex Sessions** below the Workspace list and above Settings.
+3. Review the aggregate scan counts, then select **Import all**.
+4. Confirm that imported rows already show their Codex titles and source activity
+   order, then open any Session and continue chatting.
+
+This release imports the whole Workspace and does not offer per-Thread selection.
+Titles and recency are available before a Session is opened; batch execution time
+does not replace the Codex inventory `thread/list.updatedAt` order.
+Codex App Server remains authoritative for model context, tool state, and
+compaction. DSH stores native user/assistant presentation history and the durable
+one-to-one binding; it does not copy private Codex runtime records. Each time an
+imported Session is opened, the plugin reads that Codex Thread once and appends
+any missing terminal user/assistant Turns to DSH's presentation history, including
+interrupted or failed Turns with visible messages. Only an `inProgress` Turn waits for
+the next open. It does
+not poll in the background, synchronize while the Session stays open, or add a
+manual refresh action.
+
 ## What Works
 
 - One persistent Codex App Server Thread per DSH Session
 - Model and reasoning-effort selection
 - Streaming answers and reasoning in the native DSH conversation
 - DSH approval and user-question flows
-- Images, tool activity, interruption, and continuation
+- Images, interruption, and continuation
 - Generic DSH tools exposed under the Codex App Server `dsh` namespace
 - Optional terminal transport when the separate Relay terminal plugin is present
 
@@ -240,6 +260,16 @@ unset selects the bundled, plugin-tested Codex version.
 
 DSH requires a workspace before starting a coding conversation. Select **Add
 workspace**, choose a directory, and return to **New Session**.
+
+### An imported Session says the Codex thread is open in another client
+
+Codex permits only one App Server writer for a Thread. Switching to another Thread
+in Codex Desktop may leave the writer held by that App Server process. Fully quit or
+restart the owning Codex app, CLI, or App Server process, then retry the message in
+DSH. The plugin keeps the original one-to-one binding and never creates a replacement
+Thread. There is no safe force-takeover operation in the App Server protocol. Opening
+the Session can still synchronize terminal presentation history through
+`thread/read`; only continuation is blocked by writer ownership.
 
 ### Installation says pnpm is missing
 

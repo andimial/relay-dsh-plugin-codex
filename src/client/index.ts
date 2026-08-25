@@ -2,6 +2,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { AdvancedDebugPreference } from '../../advanced-debug-preference.mjs'
 import { installModelSelection, type ModelSelectionContext } from '../../model-selection.mjs'
 import {
@@ -10,9 +11,14 @@ import {
   HiddenSessionLogAction,
   type AdvancedDebugInjected,
 } from './AdvancedDebug.tsx'
-import { CodexActivityView } from './CodexActivityView.tsx'
-import { codexActivityDefinition } from './codex-activity.ts'
 import { en, zh, type CodexLocaleKey } from './locales.ts'
+import { WorkspaceImportAction, type WorkspaceImportInjected } from './WorkspaceImportAction.tsx'
+import {
+  importCodexWorkspace,
+  refreshImportedWorkspace,
+  scanCodexWorkspace,
+} from './workspace-import-client.mjs'
+import { observeSessionOpen, syncOpenedCodexSessionAndRefresh } from './session-open-sync.mjs'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -20,15 +26,53 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const inject = ['slots', 'theme', 'locale', 'sessions', 'connection', 'conversationEvents']
+export const inject = ['slots', 'theme', 'locale', 'sessions', 'workspaces', 'connection']
 
 export function apply(ctx: ClientContext): () => void {
   applyAdvancedDebug(ctx)
-  ctx.conversationEvents.register(codexActivityDefinition)
-  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
-    name: 'conversation.chat.node', key: 'relay-codex-activity',
-  }, CodexActivityView))
+  applyWorkspaceImport(ctx)
+  applySessionOpenSync(ctx)
   return installModelSelection(ctx as ModelSelectionContext, 'relay-codex', 'relay-codex', 'relay-claude')
+}
+
+function applySessionOpenSync(ctx: ClientContext): void {
+  ctx.effect(() => observeSessionOpen(
+    ctx.sessions.currentProvideInfo,
+    (sessionId, isLatestSelection) => syncOpenedCodexSessionAndRefresh(
+      sessionId,
+      () => Promise.all([
+        (ctx.sessions as typeof ctx.sessions & { refresh(): Promise<void> }).refresh(),
+        (ctx.workspaces as typeof ctx.workspaces & { refresh(): Promise<void> }).refresh(),
+      ]),
+      fetch,
+      rebuiltSessionId => ctx.sessions.open(rebuiltSessionId as Parameters<typeof ctx.sessions.open>[0]),
+      undefined,
+      isLatestSelection,
+    ),
+    error => console.warn('Codex open-time history sync failed:', error),
+  ), 'relay-codex: open-time history sync')
+}
+
+function applyWorkspaceImport(ctx: ClientContext): void {
+  const injected = (): WorkspaceImportInjected => ({
+    hooks: {
+      workspaceImportWorkspaces: ctx.workspaces.list,
+      workspaceImportSessions: ctx.sessions.list,
+    },
+    scanWorkspace: cwd => scanCodexWorkspace(cwd),
+    importWorkspace: (cwd, onProgress) => importCodexWorkspace(cwd, onProgress),
+    refreshWorkspaceState: () => refreshImportedWorkspace(
+      ctx.sessions as typeof ctx.sessions & { refresh(): Promise<void> },
+      ctx.workspaces as typeof ctx.workspaces & { refresh(): Promise<void> },
+    ),
+  })
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+    name: 'sidebar.footer.action',
+    id: 'relay-codex-workspace-import',
+    order: -10,
+    inject: injected,
+    locale: 'relay.codex',
+  }, WorkspaceImportAction))
 }
 
 function applyAdvancedDebug(ctx: ClientContext): void {

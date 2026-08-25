@@ -8,8 +8,11 @@ import { CODEX_APP_DYNAMIC_TOOLS, codexDynamicTools } from "./codex-tools.js";
 
 export const CODEX_PRESET = "relay-codex";
 export const CODEX_PROVIDER = "relay-codex";
-export const CODEX_ACTIVITY_EVENT = "relay-codex/activity";
+export const CODEX_THREAD_ACTIVE_WRITER = "CODEX_THREAD_ACTIVE_WRITER";
 const CODEX_AUXILIARY_THREAD_SOURCE = "relay.codex.auxiliary";
+const IMPORT_STATES = Object.freeze([
+  "reserved", "session-created", "hydrated", "attached", "committed",
+]);
 
 export class CodexDshAdapter extends LlmAdapter {
   constructor({
@@ -29,6 +32,9 @@ export class CodexDshAdapter extends LlmAdapter {
     this.dynamicTools = dynamicTools;
     this.links = new Map();
     this.settings = new Map();
+    this.bindingModes = new Map();
+    this.importStates = new Map();
+    this.dshOwnedTurnIds = new Map();
     this.pendingThreads = new Map();
     this.agents = new Map();
     this.dshToolNames = new Map();
@@ -36,6 +42,13 @@ export class CodexDshAdapter extends LlmAdapter {
     for (const [sessionId, record] of linkStore?.entries() ?? []) {
       if (record.threadId) this.links.set(sessionId, record.threadId);
       this.settings.set(sessionId, record.config);
+      this.bindingModes.set(sessionId, record.bindingMode === "imported" ? "imported" : "native");
+      if (record.bindingMode === "imported" && IMPORT_STATES.includes(record.importState)) {
+        this.importStates.set(sessionId, record.importState);
+      }
+      if (Array.isArray(record.dshTurnIds)) {
+        this.dshOwnedTurnIds.set(sessionId, new Set(record.dshTurnIds));
+      }
     }
   }
 
@@ -155,6 +168,9 @@ export class CodexDshAdapter extends LlmAdapter {
         this.appliedDynamicToolSignatures.set(sessionId, signature);
         return linked;
       } catch (error) {
+        if (this.bindingModes.get(sessionId) === "imported") {
+          throw importedResumeError(linked, error);
+        }
         this.logger.warn(`Relay could not resume Codex thread ${linked}; creating a replacement: ${error.message}`);
         this.links.delete(sessionId);
       }
@@ -170,7 +186,132 @@ export class CodexDshAdapter extends LlmAdapter {
     this.linkStore?.set(sessionId, {
       threadId: this.links.get(sessionId) ?? null,
       config: this.configuration(sessionId),
+      bindingMode: this.bindingModes.get(sessionId) ?? "native",
+      ...(this.importStates.has(sessionId) ? { importState: this.importStates.get(sessionId) } : {}),
+      ...(this.dshOwnedTurnIds.has(sessionId)
+        ? { dshTurnIds: [...this.dshOwnedTurnIds.get(sessionId)].sort() }
+        : {}),
     });
+  }
+
+  bindImportedThread(sessionId, threadId, config = {}) {
+    const key = String(sessionId ?? "").trim();
+    const candidate = String(threadId ?? "").trim();
+    if (!key) throw new Error("DSH sessionId is required for an imported binding");
+    if (!candidate) throw new Error("Codex threadId is required for an imported binding");
+    const existingSession = this.dshSessionForThread(candidate);
+    if (existingSession && existingSession !== key) {
+      throw new Error(`Codex thread ${candidate} is already bound to DSH session ${existingSession}`);
+    }
+    const existingThread = this.links.get(key);
+    if (existingThread && existingThread !== candidate) {
+      throw new Error(`DSH session ${key} is already bound to Codex thread ${existingThread}`);
+    }
+    const nextConfig = { ...this.configuration(key, config.cwd), ...compact(config) };
+    this.links.set(key, candidate);
+    this.settings.set(key, nextConfig);
+    this.bindingModes.set(key, "imported");
+    if (!this.importStates.has(key)) this.importStates.set(key, "reserved");
+    this.persistLink(key);
+    return this.bindingForSession(key);
+  }
+
+  replaceImportedSession(oldSessionId, newSessionId) {
+    const oldKey = String(oldSessionId ?? "").trim();
+    const newKey = String(newSessionId ?? "").trim();
+    if (!oldKey) throw new Error("Old DSH sessionId is required for an imported binding replacement");
+    if (!newKey) throw new Error("New DSH sessionId is required for an imported binding replacement");
+    if (oldKey === newKey) return this.bindingForSession(oldKey);
+    if (this.bindingModes.get(oldKey) !== "imported") {
+      throw new Error(`DSH session ${oldKey} is not an imported Codex binding`);
+    }
+    const threadId = this.links.get(oldKey);
+    if (!threadId) throw new Error(`DSH session ${oldKey} is not bound to a Codex thread`);
+    const existingSession = this.dshSessionForThread(threadId);
+    if (existingSession && existingSession !== oldKey) {
+      throw new Error(`Codex thread ${threadId} is already bound to DSH session ${existingSession}`);
+    }
+    const existingThread = this.links.get(newKey);
+    if (existingThread && existingThread !== threadId) {
+      throw new Error(`DSH session ${newKey} is already bound to Codex thread ${existingThread}`);
+    }
+
+    const config = structuredClone(this.configuration(oldKey));
+    const ownedTurnIds = this.dshOwnedTurnIds.get(oldKey);
+    const replacementRecord = {
+      threadId,
+      config,
+      bindingMode: "imported",
+      importState: "committed",
+      ...(ownedTurnIds ? { dshTurnIds: [...ownedTurnIds].sort() } : {}),
+    };
+    this.linkStore?.replace(oldKey, newKey, replacementRecord);
+
+    this.links.delete(oldKey);
+    this.settings.delete(oldKey);
+    this.bindingModes.delete(oldKey);
+    this.importStates.delete(oldKey);
+    this.dshOwnedTurnIds.delete(oldKey);
+    this.appliedDynamicToolSignatures.delete(oldKey);
+
+    this.links.set(newKey, threadId);
+    this.settings.set(newKey, config);
+    this.bindingModes.set(newKey, "imported");
+    this.importStates.set(newKey, "committed");
+    if (ownedTurnIds) this.dshOwnedTurnIds.set(newKey, new Set(ownedTurnIds));
+    return this.bindingForSession(newKey);
+  }
+
+  markImportState(sessionId, state) {
+    const key = String(sessionId);
+    if (this.bindingModes.get(key) !== "imported") {
+      throw new Error(`DSH session ${key} is not an imported Codex binding`);
+    }
+    const nextIndex = IMPORT_STATES.indexOf(state);
+    if (nextIndex === -1) throw new Error(`unknown Codex import state ${state}`);
+    const current = this.importStates.get(key) ?? "reserved";
+    if (nextIndex >= IMPORT_STATES.indexOf(current)) {
+      this.importStates.set(key, state);
+      this.persistLink(key);
+    }
+    return this.bindingForSession(key);
+  }
+
+  bindingForSession(sessionId) {
+    const key = String(sessionId);
+    const threadId = this.links.get(key);
+    if (!threadId) return null;
+    return {
+      sessionId: key,
+      threadId,
+      config: structuredClone(this.configuration(key)),
+      bindingMode: this.bindingModes.get(key) ?? "native",
+      importState: this.importStates.get(key) ?? null,
+    };
+  }
+
+  bindingForThread(threadId) {
+    const sessionId = this.dshSessionForThread(String(threadId));
+    return sessionId ? this.bindingForSession(sessionId) : null;
+  }
+
+  ownedTurnIdsForSession(sessionId) {
+    return new Set(this.dshOwnedTurnIds.get(String(sessionId)) ?? []);
+  }
+
+  recordOwnedTurn(sessionId, turnId) {
+    const key = String(sessionId);
+    if (this.bindingModes.get(key) !== "imported") return;
+    const candidate = String(turnId ?? "").trim();
+    if (!candidate) throw new Error("Codex turnId is required");
+    let turns = this.dshOwnedTurnIds.get(key);
+    if (!turns) {
+      turns = new Set();
+      this.dshOwnedTurnIds.set(key, turns);
+    }
+    if (turns.has(candidate)) return;
+    turns.add(candidate);
+    this.persistLink(key);
   }
 
   threadFor(sessionId) {
@@ -221,6 +362,7 @@ export class CodexDshAdapter extends LlmAdapter {
     try {
       const started = await this.runtime.sendMessage(threadId, { ...input, ...config });
       turnId = started.id;
+      this.recordOwnedTurn(sessionId, turnId);
       const state = createStreamState();
       let completedTurn = null;
       while (!completedTurn) {
@@ -354,7 +496,6 @@ export class CodexDshAdapter extends LlmAdapter {
       return textDelta(state, params.itemId, "text", params.delta ?? "");
     }
     if (message.method === "item/started") {
-      if (isActivityItem(params.item)) this.appendActivity(agent, threadId, turnId, params.item, "started", state);
       return [];
     }
     if (message.method === "item/completed") {
@@ -387,20 +528,30 @@ export class CodexDshAdapter extends LlmAdapter {
         { type: "block-end", index, block: { type: "image", attachment } },
       ];
     }
-    if (isActivityItem(item)) this.appendActivity(agent, threadId, turnId, item, "completed", state);
     return [];
   }
+}
 
-  appendActivity(agent, threadId, turnId, item, phase, state) {
-    if (!state.startedActivities.has(item.id)) {
-      state.startedActivities.add(item.id);
-      agent.session.append(CODEX_ACTIVITY_EVENT, activityPayload(threadId, turnId, item, "started"));
-    }
-    if (phase === "completed" && !state.completedActivities.has(item.id)) {
-      state.completedActivities.add(item.id);
-      agent.session.append(CODEX_ACTIVITY_EVENT, activityPayload(threadId, turnId, item, "completed"));
-    }
+function importedResumeError(threadId, cause) {
+  if (isActiveWriterError(cause)) {
+    const error = new Error(
+      `Codex thread ${threadId} is still owned by another Codex App Server. `
+      + "Switching Sessions may not release this process-level writer. Fully quit or restart "
+      + "the owning Codex app, CLI, or App Server process, then retry this message in DSH. "
+      + "DSH kept the original thread binding and did not create a replacement.",
+      { cause },
+    );
+    error.code = CODEX_THREAD_ACTIVE_WRITER;
+    error.retryable = true;
+    error.threadId = threadId;
+    return error;
   }
+  return new Error(`Relay could not resume imported Codex thread ${threadId}: ${cause.message}`, { cause });
+}
+
+function isActiveWriterError(error) {
+  return typeof error?.message === "string"
+    && /\balready has an active writer\b/i.test(error.message);
 }
 
 class ActivityQueue {
@@ -451,8 +602,6 @@ function createStreamState() {
     nextIndex: 0,
     blocks: new Map(),
     completed: new Set(),
-    startedActivities: new Set(),
-    completedActivities: new Set(),
   };
 }
 
@@ -491,49 +640,6 @@ function completeTextItem(state, id, type, completeText) {
   return chunks;
 }
 
-function activityPayload(threadId, turnId, item, phase) {
-  const activity = normalizeActivity(item, phase);
-  return { version: 1, threadId, turnId, itemId: String(item.id), phase, activity };
-}
-
-function normalizeActivity(item, phase) {
-  const type = String(item.type ?? "tool");
-  const status = phase === "started" ? "running" : item.status === "failed" ? "error" : "completed";
-  if (type === "commandExecution") {
-    return bounded({ type, status, title: "Bash", summary: item.command ?? "Command", input: item.command, output: item.aggregatedOutput });
-  }
-  if (type === "fileChange") {
-    return bounded({ type, status, title: "File change", summary: summarizeValue(item.changes), input: item.changes, output: item.result });
-  }
-  if (type === "webSearch") {
-    return bounded({ type, status, title: "Web search", summary: item.query ?? item.action ?? "Search", input: item.query ?? item.action, output: item.result });
-  }
-  if (type === "plan") {
-    return bounded({ type, status, title: "Plan", summary: firstLine(item.text), output: item.text });
-  }
-  const title = item.tool ?? item.name ?? item.server ?? humanize(type);
-  return bounded({
-    type,
-    status,
-    title,
-    summary: summarizeValue(item.arguments ?? item.input ?? item.prompt),
-    input: item.arguments ?? item.input,
-    output: item.output ?? item.result ?? item.error,
-  });
-}
-
-function bounded(value) {
-  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
-    if (entry === undefined || entry === null || entry === "") return [];
-    const text = typeof entry === "string" ? entry : JSON.stringify(entry, null, 2);
-    return [[key, text.length > 20_000 ? `${text.slice(0, 20_000)}\n...` : text]];
-  }));
-}
-
-function isActivityItem(item) {
-  return item?.id && !["userMessage", "agentMessage", "reasoning", "imageGeneration", "imageView"].includes(item.type);
-}
-
 function permissionConfiguration(events) {
   let sandbox = "workspace-write";
   let approvalPolicy = "on-request";
@@ -546,15 +652,6 @@ function permissionConfiguration(events) {
 
 function reasoningText(item) {
   return [...(item.summary ?? []), ...(item.content ?? [])].filter(Boolean).join("\n\n");
-}
-
-function summarizeValue(value) {
-  if (value === undefined || value === null) return "";
-  return firstLine(typeof value === "string" ? value : JSON.stringify(value));
-}
-
-function firstLine(value) {
-  return String(value ?? "").split("\n")[0].slice(0, 240);
 }
 
 function humanize(value) {
