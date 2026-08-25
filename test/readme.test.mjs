@@ -55,7 +55,7 @@ test('README preserves standalone scope and every supported installation source'
     assert.match(readme, /relay-dsh-plugin-codex@latest/)
     assert.match(readme, /relay-dsh-plugin-codex@next/)
     assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex#main/)
-    assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex#v0\.1\.1-rc\.4/)
+    assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex#v0\.1\.1/)
   }
   assert.match(english, /DSH is currently a developer preview/)
 })
