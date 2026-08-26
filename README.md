@@ -19,6 +19,9 @@ English | [中文](README.zh.md)
 workspace file preview, and an executed terminal command. [Watch the H.264
 MP4](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/media/dsh-plugin-suite-demo.mp4?raw=1).*
 
+Prefer conversation-based discovery and installation? [Watch the Plugin Manager
+find and install this exact package](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/media/dsh-plugin-manager-codex-install-demo.mp4?raw=1).
+
 `relay-dsh-plugin-codex` adds **Codex as a conversation backend** to the
 official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 (DSH) Web UI. After installation, **Codex** appears in DSH's New Session mode

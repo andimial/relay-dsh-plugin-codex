@@ -19,6 +19,9 @@
 预览工作区文件，Terminal 实际执行命令。[观看 H.264
 MP4](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/media/dsh-plugin-suite-demo.mp4?raw=1)。*
 
+希望直接在 DSH 对话中发现并安装插件？[观看 Plugin Manager 搜索并安装本包的
+真实演示](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/media/dsh-plugin-manager-codex-install-demo.mp4?raw=1)。
+
 `relay-dsh-plugin-codex` 为官方
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）Web
 界面增加 **Codex 对话后端**。安装后，DSH 的新建会话模式菜单中会出现
