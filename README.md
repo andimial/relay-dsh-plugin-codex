@@ -6,7 +6,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/yangbobo2021/relay-dsh-plugin-codex?style=flat)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/stargazers)
 [![MIT license](https://img.shields.io/github/license/yangbobo2021/relay-dsh-plugin-codex)](LICENSE)
 [![DSH compatibility](https://img.shields.io/badge/DSH-0.1.1--rc.2-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
-[![npm provenance](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.1)
+[![npm provenance](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.2)
 
 English | [中文](README.zh.md)
 
@@ -94,7 +94,7 @@ Use `@latest` to install the current stable release:
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@latest
 ```
 
-At the time of writing, `latest` resolves to stable version `0.1.1`. The linked
+At the time of writing, `latest` resolves to stable version `0.1.2`. The linked
 npm page is the source of truth for the current version.
 
 #### npm prerelease (recommended during DSH preview)
@@ -108,7 +108,7 @@ on a global `codex` executable:
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-At the time of writing, `next` resolves to `0.1.1-rc.4`.
+At the time of writing, `next` resolves to `0.1.2-rc.1`.
 
 #### GitHub development build
 
@@ -122,7 +122,7 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/rel
 full Commit SHA instead. For example:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.1
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.2
 ```
 
 The official DSH CLI initializes the `web` Profile if it does not exist, asks

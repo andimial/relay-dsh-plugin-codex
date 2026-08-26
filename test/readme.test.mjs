@@ -70,12 +70,15 @@ test('reliability spec, READMEs, and acceptance matrix describe the implemented 
 test('README preserves standalone scope and every supported installation source', () => {
   assert.match(english, /independently installable/i)
   assert.match(english, /no runtime dependency on the\s+Relay application, Relay Events, or another Relay plugin/i)
+  const versionTag = new RegExp(
+    `github:yangbobo2021/relay-dsh-plugin-codex#v${manifest.version.replaceAll('.', '\\.')}`,
+  )
   for (const readme of [english, chinese]) {
     assert.match(readme, /https:\/\/www\.npmjs\.com\/package\/relay-dsh-plugin-codex/)
     assert.match(readme, /relay-dsh-plugin-codex@latest/)
     assert.match(readme, /relay-dsh-plugin-codex@next/)
     assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex#main/)
-    assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex#v0\.1\.1/)
+    assert.match(readme, versionTag)
   }
   assert.match(english, /DSH is currently a developer preview/)
 })
