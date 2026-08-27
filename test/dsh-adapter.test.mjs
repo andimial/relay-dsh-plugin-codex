@@ -867,6 +867,63 @@ test("Codex exposes and executes only the generic DSH tools assembled for the tu
   assert.match(interactions.dynamic.at(-1).text, /not available for this DSH turn/);
 });
 
+test("Codex aliases a reserved DSH MCP tool and executes its original name", async () => {
+  const originalName = "mcp__context7__query-docs";
+  const calls = [];
+  const runtime = new FakeRuntime();
+  const agent = fakeAgent({
+    tools: {
+      async execute(input) {
+        calls.push(input);
+        return { isError: false, content: [{ type: "text", text: "context7:ok" }] };
+      },
+    },
+  });
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  adapter.attachAgent(agent);
+
+  await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "query docs" }] }],
+    tools: [{
+      name: originalName,
+      description: "Query Context7 documentation.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    }],
+  }));
+
+  const dshNamespace = runtime.createdConfig.dynamicTools.find(tool => tool.type === "namespace" && tool.name === "dsh");
+  const exposedName = dshNamespace.tools[0].name;
+  assert.notEqual(exposedName, originalName);
+  assert.match(exposedName, /^[a-zA-Z0-9_-]{1,128}$/);
+
+  const interactions = new InteractionRuntime();
+  await handleCodexServerRequest({
+    agents: { get: id => id === agent.id ? agent : null },
+    approval: { async request() { throw new Error("unexpected approval"); } },
+    userQuestions: { async ask() { throw new Error("unexpected question"); } },
+  }, {
+    adapter,
+    runtime: interactions,
+    request: request("context7-1", "item/dynamicTool/call", {
+      namespace: "dsh",
+      name: exposedName,
+      arguments: JSON.stringify({ library: "codex" }),
+    }),
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, originalName);
+  assert.deepEqual(calls[0].arguments, { library: "codex" });
+  assert.deepEqual(interactions.dynamic.at(-1), {
+    id: "context7-1",
+    success: true,
+    text: "context7:ok",
+  });
+});
+
 test("Relay exposes only the executable Codex app workspace dependency tool", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "relay-codex-runtime-"));
   const previousRuntimeRoot = process.env.CODEX_PRIMARY_RUNTIME_ROOT;

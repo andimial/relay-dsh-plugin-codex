@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+const DSH_TOOL_ALIAS_PREFIX = "dshx_";
+const CODEX_DYNAMIC_TOOL_NAME_MAX_LENGTH = 128;
+const CODEX_DYNAMIC_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 export const CODEX_APP_DYNAMIC_TOOLS = [
   {
@@ -19,13 +24,18 @@ export const CODEX_APP_DYNAMIC_TOOLS = [
 ];
 
 export function codexDynamicTools(dshTools = [], builtins = CODEX_APP_DYNAMIC_TOOLS) {
+  return codexDshToolSurface(dshTools, builtins).dynamicTools;
+}
+
+export function codexDshToolSurface(dshTools = [], builtins = CODEX_APP_DYNAMIC_TOOLS) {
+  const namesByAlias = new Map();
   const tools = dshTools.map(tool => ({
     type: "function",
-    name: tool.name,
+    name: registerDshToolAlias(namesByAlias, tool.name),
     description: tool.description,
     inputSchema: structuredClone(tool.parameters),
   }));
-  return tools.length === 0
+  const dynamicTools = tools.length === 0
     ? structuredClone(builtins)
     : [...structuredClone(builtins), {
         type: "namespace",
@@ -33,6 +43,7 @@ export function codexDynamicTools(dshTools = [], builtins = CODEX_APP_DYNAMIC_TO
         description: "Tools contributed to this conversation through the DSH plugin runtime.",
         tools,
       }];
+  return { dynamicTools, namesByAlias };
 }
 
 export async function handleCodexServerRequest(ctx, { adapter, runtime, request }) {
@@ -85,13 +96,14 @@ async function handleDynamicTool(runtime, request, adapter, agent, sessionId) {
     return;
   }
   if (namespace === "dsh") {
-    if (!adapter.hasDshTool(sessionId, tool)) {
+    const dshTool = adapter.dshToolName(sessionId, tool);
+    if (!dshTool) {
       runtime.respondDynamicTool(request.id, false, `DSH tool ${tool} is not available for this DSH turn.`);
       return;
     }
     const result = await agent.ctx.tools.execute({
       callId: `codex:${request.id}`,
-      name: tool,
+      name: dshTool,
       arguments: requestedArguments(request.params),
       agent,
       signal: request.signal ?? new AbortController().signal,
@@ -100,6 +112,35 @@ async function handleDynamicTool(runtime, request, adapter, agent, sessionId) {
     return;
   }
   runtime.respondDynamicTool(request.id, false, `Unknown Codex app tool ${tool}.`);
+}
+
+function registerDshToolAlias(namesByAlias, name) {
+  if (typeof name !== "string" || !name) {
+    throw new Error("DSH tool name must be a non-empty string");
+  }
+  const alias = codexSafeDshToolName(name);
+  const existing = namesByAlias.get(alias);
+  if (existing === name) {
+    throw new Error(`Duplicate DSH tool name: ${name}`);
+  }
+  if (existing !== undefined) {
+    throw new Error(`DSH tool alias collision between ${existing} and ${name}: ${alias}`);
+  }
+  namesByAlias.set(alias, name);
+  return alias;
+}
+
+function codexSafeDshToolName(name) {
+  if (isCodexSafeDshToolName(name) && !name.startsWith(DSH_TOOL_ALIAS_PREFIX)) return name;
+  const digest = createHash("sha256").update(name, "utf8").digest("hex");
+  return `${DSH_TOOL_ALIAS_PREFIX}${digest}`;
+}
+
+function isCodexSafeDshToolName(name) {
+  return name.length <= CODEX_DYNAMIC_TOOL_NAME_MAX_LENGTH
+    && CODEX_DYNAMIC_TOOL_NAME_PATTERN.test(name)
+    && name !== "mcp"
+    && !name.startsWith("mcp__");
 }
 
 function requestedArguments(params = {}) {

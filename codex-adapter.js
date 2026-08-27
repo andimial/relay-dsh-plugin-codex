@@ -4,7 +4,7 @@ import { basename, resolve } from "node:path";
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 
 import { importCodexGeneratedImage, importCodexImage } from "./codex-image.js";
-import { CODEX_APP_DYNAMIC_TOOLS, codexDynamicTools } from "./codex-tools.js";
+import { CODEX_APP_DYNAMIC_TOOLS, codexDshToolSurface } from "./codex-tools.js";
 import { rebindRequiredStatus } from "./connection-status.mjs";
 
 export const CODEX_PRESET = "relay-codex";
@@ -38,7 +38,7 @@ export class CodexDshAdapter extends LlmAdapter {
     this.dshOwnedTurnIds = new Map();
     this.pendingThreads = new Map();
     this.agents = new Map();
-    this.dshToolNames = new Map();
+    this.dshToolNamesByAlias = new Map();
     this.appliedDynamicToolSignatures = new Map();
     this.rebindStates = new Map();
     this.bindingEpochs = new Map();
@@ -110,7 +110,7 @@ export class CodexDshAdapter extends LlmAdapter {
   detachAgent(sessionId) {
     const key = String(sessionId);
     this.agents.delete(key);
-    this.dshToolNames.delete(key);
+    this.dshToolNamesByAlias.delete(key);
     this.appliedDynamicToolSignatures.delete(key);
     this.bumpBindingEpoch(key);
   }
@@ -443,8 +443,8 @@ export class CodexDshAdapter extends LlmAdapter {
     this.bindingEpochs.set(key, (this.bindingEpochs.get(key) ?? 0) + 1);
   }
 
-  hasDshTool(sessionId, name) {
-    return this.dshToolNames.get(String(sessionId))?.has(name) === true;
+  dshToolName(sessionId, alias) {
+    return this.dshToolNamesByAlias.get(String(sessionId))?.get(alias) ?? null;
   }
 
   async *stream(options) {
@@ -467,10 +467,11 @@ export class CodexDshAdapter extends LlmAdapter {
       cwd: agent.session.header.cwd,
     });
     const dshTools = options.tools ?? [];
-    this.dshToolNames.set(sessionId, new Set(dshTools.map(tool => tool.name)));
+    const dshToolSurface = codexDshToolSurface(dshTools, this.dynamicTools);
+    this.dshToolNamesByAlias.set(sessionId, dshToolSurface.namesByAlias);
     const threadId = await this.ensureThread(
       sessionId,
-      codexDynamicTools(dshTools, this.dynamicTools),
+      dshToolSurface.dynamicTools,
       inheritedCodexProvenance(options.messages),
     );
     const queue = new ActivityQueue(options.signal);
