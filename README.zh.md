@@ -13,24 +13,46 @@
 **npm 包名：** [`relay-dsh-plugin-codex`](https://www.npmjs.com/package/relay-dsh-plugin-codex)
 · [全部 Relay DSH 插件](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/dsh-plugins.zh.md)
 
-[![在官方 DSH 中实装运行的 Relay 插件](https://raw.githubusercontent.com/yangbobo2021/Relay/codex/relay-foundation/docs/media/dsh-plugin-suite-demo.gif)](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/dsh-plugins.zh.md)
-
-*演示来自官方 DSH 上的真实 npm 安装：Codex 与 Claude 返回真实回复，Files
-预览工作区文件，Terminal 实际执行命令。[观看 H.264
-MP4](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/media/dsh-plugin-suite-demo.mp4?raw=1)。*
-
-希望直接在 DSH 对话中发现并安装插件？[观看 Plugin Manager 搜索并安装本包的
-真实演示](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/media/dsh-plugin-manager-codex-install-demo.zh.mp4?raw=1)。
+**无需切换界面或维护 DSH Fork，直接在官方 DeepSeek Harness 中运行
+Codex。**
 
 `relay-dsh-plugin-codex` 为官方
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）Web
-界面增加 **Codex 对话后端**。安装后，DSH 的新建会话模式菜单中会出现
-**Codex**。每个 DSH Session 会绑定一个 Codex App Server Thread。
+界面增加原生 **Codex 对话后端**。你可以继续使用 DSH 的工作区、对话历史、
+输入框、审批和工具；每个 DSH Session 会持续绑定一个 Codex App Server
+Thread。本插件可独立安装，不需要下载 Relay 仓库。
+
+## 在官方 DSH 中立即试用
+
+首次创建 Session 前，请先通过官方 Codex 客户端完成认证。使用 Codex CLI 时
+可以执行：
+
+```bash
+codex login
+```
+
+安装要求 Node.js 22.13 或更高版本，并且 `pnpm` 已加入 `PATH`。停止 DSH Web，
+安装稳定版插件并重新启动：
+
+```bash
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@latest
+npx @deepseek-ai/dsh@0.1.1-rc.2 web
+```
+
+打开 **New Session**，选择工作区，再从模式菜单中选择 **Codex** 并发送消息。
 
 ![DSH 新建会话菜单中的 Codex 和 Claude Code](docs/images/dsh-new-session-backends.jpg)
 
 上图来自安装了 Codex 和 Claude 插件的官方 DSH `0.1.1-rc.2`。如果只安装
 本插件，菜单中只会新增 **Codex**。
+
+[观看 Plugin Manager 在 38 秒内找到并安装本插件](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/media/dsh-plugin-manager-codex-install-demo.zh.mp4?raw=1)
+· [查看全部 Relay DSH 插件](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/dsh-plugins.zh.md)
+
+如果它能让你少切换一个界面，欢迎
+[Star 本插件](https://github.com/yangbobo2021/relay-dsh-plugin-codex)，并
+[反馈你的 DSH 版本或安装结果](https://github.com/yangbobo2021/relay-dsh-plugin-codex/issues)。
+这些真实信号能帮助更多 DSH 用户找到经过验证的 Codex 后端。
 
 ## 什么情况下需要这个插件？
 
@@ -46,7 +68,7 @@ MP4](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/medi
 使用 DSH 标准 Agent 不需要安装本插件。本插件也不提供 Relay Events、文件
 浏览和终端面板，这些能力由其他可选插件提供。
 
-## 基于官方 DSH 的快速安装
+## 完整安装与兼容性说明
 
 以下步骤已经在这些版本上实际验证：
 
