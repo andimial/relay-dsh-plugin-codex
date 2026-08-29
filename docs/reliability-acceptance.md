@@ -17,6 +17,11 @@ generated `lib/` artifacts, package contents, and this matrix agree.
 | F1b Fork rejection | Replay lacks A, T has no owning DSH Session, A is in progress, or App Server rejects/returns an invalid child. | Send first child continuation, then optionally retry the same stable provenance after recovery. | `CODEX_REBIND_REQUIRED` with T/A/I; zero fallback `thread/start` and zero child `turn/start`; no link before successful retry. | `dsh-adapter.test.mjs`; manual forced rejection check. | Unsafe provenance, partial-history forks, or masking protocol failure with a fresh Thread. |
 | F2 Persisted resume failure | Link store maps DSH Session to T; resume reports missing or transient failure. | Restart adapter and ensure Thread. | T remains persisted; missing enters rebind; transient failure is retryable; zero replacement starts. | `dsh-adapter.test.mjs`. | Destructive recovery that masks broken bindings. |
 | F3 Disconnect / pending approval / reconnect / stale replay | Approval request carries DSH Session, T/A/I, request id, and binding epoch. | Hold approval; disconnect browser; invalidate owner/binding; reconnect and answer replay. | `rejectRequest` with `CODEX_STALE_APPROVAL`; never `resolveRequest(accept)`; T/A/I named. | `dsh-adapter.test.mjs` ownership replay test; official DSH browser replay check. | Approval sent to the wrong Thread, Turn, or Item. |
+| I1 Historical JPEG with `.png` name | Replay the `imageView` shape from DSH Session `session-6f78fa6a-bc1d-4be9-b15b-264d5f743c05`; the source file is named `completed-clean.png` and begins with JPEG/JFIF bytes. | Import the item, then project the following final assistant item and completed Turn. | Attachment media type is `image/jpeg`; image and final text are emitted; DSH finishes with `stop`, not `Declared image type does not match its bytes.` | `dsh-adapter.test.mjs` historical Session regression; manual replay against the retained local Session and source image. | Exact Issue #5 regression and apparent DSH interruption while Codex continues. |
+| I2 Declared/extension type differs from bytes | Use file and generated-image inputs whose `.png` name or `data:image/png` declaration contains JPEG bytes. | Import both through the normal attachment boundary. | Both are submitted as `image/jpeg`; generated attachment name uses `.jpg`; DSH admission succeeds. | `dsh-adapter.test.mjs`. | Trusting unverified metadata over encoded content. |
+| I3 Supported signatures | Supply PNG, JPEG, GIF, WebP, and invalid signatures. | Detect media type before DSH admission. | Four supported signatures map exactly; invalid bytes return no media type. | `dsh-adapter.test.mjs`. | Partial fix that handles only the reported JPEG case. |
+| I4 Image failure isolation | Emit an invalid `imageView` or force DSH attachment storage to reject a valid signature, followed by final assistant text and a completed source Turn. | Consume the adapter stream. | One preview-unavailable block and warning with a stable reason code are emitted; no raw path or storage error leaks; final text remains; DSH finishes with `stop`; attachment storage is not called for unrecognized bytes. | `dsh-adapter.test.mjs`. | One malformed or rejected image aborting the whole DSH Turn. |
+| I5 Image path boundary | Place valid or invalid image bytes outside the Workspace and access them directly or through a symlink. | Import through `imageView`. | Import is rejected before byte admission; no external file is published. | `dsh-adapter.test.mjs`. | MIME repair weakening filesystem containment. |
 | X1 Cross-platform launch | CI on macOS, Windows, Linux; empty PATH and paths with spaces. | Resolve and execute bundled launcher tests. | Six desktop target mappings; direct argument-array spawn; no shell splitting. | CI `codex-runtime` matrix; optional signed-in smoke per OS. | PATH, quoting, backslash, shell, architecture differences. |
 | D1 Spec/package boundary | All behavior changes complete. | Run verify, build, pack, root boundary tests, and clean-reference check. | SPEC/README/code/tests/lib/package agree; official DSH reference unchanged. | Commands below plus `git diff --check`. | Documentation drift, missing artifact, upstream modification. |
 
@@ -48,3 +53,18 @@ updated together for a newer validated release.
 6. Change or detach the binding before the replayed approval is answered.
 7. Reconnect and answer the replay. The plugin must call `rejectRequest`, not
    `resolveRequest`, and the failure must name T/A/I.
+
+## Issue #5 regression sequence
+
+1. Retain the original Session export and the original
+   `completed-clean.png` source file without rewriting either artifact.
+2. Confirm the source file has a `.png` suffix while `file` and its `ff d8 ff`
+   prefix identify JPEG bytes.
+3. Confirm plugin `0.1.2` derives `image/png` from that suffix and the retained
+   DSH Session ends with `Declared image type does not match its bytes.`
+4. Replay the same `imageView` path and following terminal assistant item through
+   the modified adapter.
+5. Confirm DSH receives `image/jpeg`, renders the image and terminal text, and
+   finishes normally without changing or replacing the source Codex Thread.
+6. Repeat with malformed bytes. Confirm only the preview becomes unavailable;
+   the surrounding DSH Turn still completes.
