@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -187,6 +187,121 @@ test("user image messages are forwarded as Codex local image inputs", async () =
     fsPath: "/tmp/codex-clipboard.png",
     label: "codex-clipboard.png",
   }]);
+});
+
+test("DSH attachment images are read, materialized, and forwarded in order", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-dsh-input-"));
+  const workspace = join(directory, "workspace");
+  await mkdir(workspace);
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = join(directory, "codex-home");
+  context.after(async () => {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const first = pngFixture("first-image");
+  const second = pngFixture("second-image");
+  const stored = new Map([
+    ["first", first],
+    ["second", second],
+  ]);
+  const reads = [];
+  const attachments = {
+    async readImage(ref, signal) {
+      signal?.throwIfAborted();
+      reads.push(ref.attachmentId);
+      return { ref, data: Uint8Array.from(stored.get(ref.attachmentId)) };
+    },
+  };
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve(), attachments });
+  const agent = fakeAgent({ cwd: workspace });
+  adapter.attachAgent(agent);
+
+  await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{
+      role: "user",
+      source: { kind: "user" },
+      content: [
+        { type: "image", attachment: { attachmentId: "first", mediaType: "image/png", name: "clipboard.png" } },
+        { type: "image", attachment: { attachmentId: "second", mediaType: "image/png", name: "clipboard.png" } },
+        { type: "text", text: "read both markers" },
+      ],
+    }],
+  }));
+
+  assert.deepEqual(reads, ["first", "second"]);
+  assert.equal(runtime.sent[0].message.text, "read both markers");
+  assert.deepEqual(runtime.sent[0].message.localImages.map(image => image.label), ["clipboard.png", "clipboard.png"]);
+  assert.deepEqual(await readFile(runtime.sent[0].message.localImages[0].path), first);
+  assert.deepEqual(await readFile(runtime.sent[0].message.localImages[1].path), second);
+  assert.notEqual(runtime.sent[0].message.localImages[0].path, runtime.sent[0].message.localImages[1].path);
+  assert.deepEqual(await readdir(workspace), []);
+});
+
+test("invalid DSH image attachments fail before Codex Thread creation", async (t) => {
+  const scenarios = [
+    { name: "missing reference", block: { type: "image" }, attachments: { async readImage() {} }, code: "CODEX_IMAGE_INPUT_INVALID" },
+    { name: "service unavailable", attachments: null, code: "CODEX_IMAGE_ATTACHMENTS_UNAVAILABLE" },
+    { name: "read failure", attachments: { async readImage() { throw new Error("corrupt"); } }, code: "CODEX_IMAGE_READ_FAILED" },
+    { name: "invalid bytes", attachments: { async readImage(ref) { return { ref, data: Uint8Array.from([1, 2, 3]) }; } }, code: "CODEX_IMAGE_TYPE_UNSUPPORTED" },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const runtime = new FakeRuntime();
+      const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve(), attachments: scenario.attachments });
+      const agent = fakeAgent();
+      adapter.attachAgent(agent);
+      await assert.rejects(collect(adapter.stream({
+        provider: "relay-codex",
+        model: "codex-test",
+        sessionId: agent.id,
+        messages: [{ role: "user", source: { kind: "user" }, content: [
+          scenario.block ?? { type: "image", attachment: { attachmentId: "broken", mediaType: "image/png" } },
+          { type: "text", text: "describe image" },
+        ] }],
+      })), error => error.code === scenario.code);
+      assert.equal(runtime.created, 0);
+      assert.equal(runtime.sent.length, 0);
+    });
+  }
+});
+
+test("a pure DSH image message starts one Codex image Turn", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-pure-image-"));
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = directory;
+  context.after(async () => {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const data = pngFixture("pure-image");
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    attachments: { async readImage(ref) { return { ref, data: Uint8Array.from(data) }; } },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [
+      { type: "image", attachment: { attachmentId: "only-image", mediaType: "image/png" } },
+    ] }],
+  }));
+
+  assert.equal(runtime.sent.length, 1);
+  assert.equal(runtime.sent[0].message.text, "");
+  assert.equal(runtime.sent[0].message.localImages.length, 1);
 });
 
 test("Codex permissions follow effective DSH knobs, not failed preset intent", async () => {
@@ -1279,14 +1394,14 @@ class InteractionRuntime {
   rejectRequest(id, error) { this.rejected.push({ id, error }); }
 }
 
-function fakeAgent({ id = "dsh-1", tools = null } = {}) {
+function fakeAgent({ id = "dsh-1", tools = null, cwd = "/workspace/relay" } = {}) {
   const appended = [];
   return {
     id,
     appended,
     ctx: tools ? { tools } : {},
     session: {
-      header: { agentPreset: "relay-codex", cwd: "/workspace/relay" },
+      header: { agentPreset: "relay-codex", cwd },
       events: [],
       append(type, data) { appended.push({ type, data }); },
     },
@@ -1295,6 +1410,13 @@ function fakeAgent({ id = "dsh-1", tools = null } = {}) {
 
 function notification(method, threadId, turnId, rest) {
   return { method, params: { threadId, turnId, ...rest } };
+}
+
+function pngFixture(label) {
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(label),
+  ]);
 }
 
 function request(id, method, params) {
