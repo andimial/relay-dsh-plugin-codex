@@ -9,9 +9,11 @@ const NATIVE_CODEX_CLIENT_INFO = {
   version: "26.810.52044",
 };
 
-export const NATIVE_CODEX_APP_SERVER_ARGS = [
+export const RELAY_CODEX_APP_SERVER_ARGS = [
   "-c",
   "features.code_mode_host=true",
+  "-c",
+  "features.shell_snapshot=false",
   "app-server",
   "--analytics-default-enabled",
 ];
@@ -101,7 +103,7 @@ const NATIVE_CODEX_CAPABILITIES = {
 export class CodexAppServerClient extends EventEmitter {
   constructor({
     command,
-    args = NATIVE_CODEX_APP_SERVER_ARGS,
+    args = RELAY_CODEX_APP_SERVER_ARGS,
     requestTimeoutMs = 30_000,
     clientInfo = NATIVE_CODEX_CLIENT_INFO,
     capabilities = NATIVE_CODEX_CAPABILITIES,

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { definePlugin } from "./internal/plugin-sdk.mjs";
-import { CodexAppServerClient, NATIVE_CODEX_APP_SERVER_ARGS } from "./app-server-client.mjs";
+import { CodexAppServerClient, RELAY_CODEX_APP_SERVER_ARGS } from "./app-server-client.mjs";
 import { CodexSessionRuntime } from "./session-runtime.mjs";
 
 export const CODEX_EXECUTION_CAPABILITY = "relay.execution.codex.v1";
@@ -42,7 +42,7 @@ function createAppServerClient(config) {
   try {
     return new CodexAppServerClient({
       command: config.command,
-      args: config.args ?? NATIVE_CODEX_APP_SERVER_ARGS,
+      args: config.args ?? RELAY_CODEX_APP_SERVER_ARGS,
       requestTimeoutMs: positiveInteger(config.requestTimeoutMs, 60_000),
     });
   } catch (error) {

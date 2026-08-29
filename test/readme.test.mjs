@@ -66,6 +66,8 @@ test('reliability spec, READMEs, and acceptance matrix describe the implemented 
   assert.match(reliabilitySpec, /Subagent interaction ownership/)
   assert.match(reliabilitySpec, /completed App Server `mcpToolCall`/)
   assert.match(reliabilityAcceptance, /I6 MCP image result/)
+  assert.match(reliabilitySpec, /disables Codex `features\.shell_snapshot`/)
+  assert.match(reliabilityAcceptance, /C6 Secret-safe shell environment/)
   assert.match(
     reliabilityAcceptance,
     /disconnect\s*\/\s*pending approval\s*\/\s*reconnect/i,
