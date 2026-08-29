@@ -34,7 +34,7 @@ test("Codex threads keep their context across turns, switching, and resume", asy
   assert.deepEqual(client.requests.find(request => request.method === "thread/resume").params.dynamicTools, tools);
   const firstTurn = client.requests.find(request => request.method === "turn/start");
   assert.deepEqual(firstTurn.params.input, [{ type: "text", text: "first turn", text_elements: [] }]);
-  assert.equal(firstTurn.params.summary, "none");
+  assert.equal(firstTurn.params.summary, "concise");
   assert.equal(firstTurn.params.sandboxPolicy.networkAccess, false);
   assert.equal(firstTurn.params.permissions, null);
   assert.equal(firstTurn.params.runtimeWorkspaceRoots, null);

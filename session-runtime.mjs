@@ -320,7 +320,7 @@ export class CodexSessionRuntime extends EventEmitter {
       serviceTier: null,
       effort: null,
       multiAgentMode: DEFAULT_MULTI_AGENT_MODE,
-      summary: "none",
+      summary: "concise",
       personality: "friendly",
       responsesapiClientMetadata: { workspace_kind: "project" },
       outputSchema: null,
