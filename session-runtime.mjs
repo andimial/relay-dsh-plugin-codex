@@ -340,7 +340,88 @@ export class CodexSessionRuntime extends EventEmitter {
   }
 
   async interruptTurn(threadId, turnId) {
-    await this.client.request("turn/interrupt", { threadId, turnId });
+    const session = this.requireSession(threadId);
+    const turn = session.turns.find(candidate => candidate.id === turnId);
+    const activeCommands = (turn?.items ?? []).filter(item => (
+      item?.type === "commandExecution" && item.status === "inProgress"
+    ));
+    const itemIds = new Set(activeCommands.map(item => item.id).filter(Boolean));
+    const processIds = new Set(activeCommands.map(item => item.processId).filter(Boolean).map(String));
+    const failures = [];
+
+    if (itemIds.size > 0) {
+      try {
+        for (const terminal of await this.listBackgroundTerminals(threadId)) {
+          if (itemIds.has(terminal.itemId) && terminal.processId) {
+            processIds.add(String(terminal.processId));
+          }
+        }
+        await this.terminateBackgroundProcesses(threadId, processIds);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+
+    try {
+      await this.client.request("turn/interrupt", { threadId, turnId });
+    } catch (error) {
+      failures.push(error);
+    }
+
+    if (itemIds.size > 0) {
+      try {
+        const afterInterrupt = await this.listBackgroundTerminals(threadId);
+        const remainingProcessIds = new Set();
+        for (const terminal of afterInterrupt) {
+          if (itemIds.has(terminal.itemId) && terminal.processId) {
+            remainingProcessIds.add(String(terminal.processId));
+          }
+        }
+        await this.terminateBackgroundProcesses(threadId, remainingProcessIds);
+        const remaining = (await this.listBackgroundTerminals(threadId))
+          .filter(terminal => itemIds.has(terminal.itemId));
+        if (remaining.length > 0) {
+          throw new Error(`App Server retained ${remaining.length} interrupted background terminal(s)`);
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw turnInterruptionFailure(threadId, turnId, failures);
+    }
+  }
+
+  async listBackgroundTerminals(threadId) {
+    const terminals = [];
+    const seenCursors = new Set();
+    let cursor = null;
+    do {
+      const result = await this.client.request("thread/backgroundTerminals/list", {
+        threadId,
+        cursor,
+        limit: 100,
+      });
+      terminals.push(...(result.data ?? []));
+      cursor = result.nextCursor ?? null;
+      if (cursor !== null) {
+        if (seenCursors.has(cursor)) {
+          throw new Error(`background terminal listing repeated cursor ${cursor}`);
+        }
+        seenCursors.add(cursor);
+      }
+    } while (cursor !== null);
+    return terminals;
+  }
+
+  async terminateBackgroundProcesses(threadId, processIds) {
+    for (const processId of processIds) {
+      await this.client.request("thread/backgroundTerminals/terminate", {
+        threadId,
+        processId,
+      });
+    }
   }
 
   async syncThreadSettings(threadId, settings) {
@@ -792,6 +873,18 @@ function sanitizeAccount(result) {
 
 function compactObject(value) {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
+function turnInterruptionFailure(threadId, turnId, failures) {
+  const error = new Error(
+    `Codex could not confirm termination of interrupted work for thread ${threadId}, turn ${turnId}`,
+    { cause: failures[0] },
+  );
+  error.code = "CODEX_TURN_INTERRUPT_CLEANUP_FAILED";
+  error.threadId = threadId;
+  error.turnId = turnId;
+  error.failures = failures;
+  return error;
 }
 
 function normalizeThreadSettings(settings = {}) {

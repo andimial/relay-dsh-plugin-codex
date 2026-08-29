@@ -49,6 +49,74 @@ test("the Codex preset streams reasoning and answers into the native DSH convers
   assert.deepEqual(codexAppTools.tools.map(tool => tool.name), ["load_workspace_dependencies"]);
 });
 
+test("an unconfirmed command cleanup is surfaced instead of reporting a successful stop", async () => {
+  const runtime = new HangingInterruptRuntime(new Error("background terminal remains"));
+  const errors = [];
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    logger: { error(message, details) { errors.push({ message, details }); } },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+  const controller = new AbortController();
+  const output = collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    signal: controller.signal,
+    messages: [{
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "run a long command" }],
+    }],
+  }));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  controller.abort();
+
+  const chunks = await output;
+
+  assert.deepEqual(runtime.interruptions, [{ threadId: "thread-1", turnId: "turn-hanging" }]);
+  assert.equal(chunks.at(-1).reason.kind, "error");
+  assert.equal(chunks.at(-1).reason.failure.code, "CODEX_TURN_INTERRUPT_CLEANUP_FAILED");
+  assert.match(chunks.at(-1).reason.failure.message, /late side effects/i);
+  assert.deepEqual(errors, [{
+    message: "Codex interrupted work could not be confirmed terminated",
+    details: {
+      threadId: "thread-1",
+      turnId: "turn-hanging",
+      code: "CODEX_TURN_INTERRUPT_CLEANUP_FAILED",
+    },
+  }]);
+});
+
+test("a confirmed command cleanup preserves the standard aborted Turn result", async () => {
+  const runtime = new HangingInterruptRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+  const controller = new AbortController();
+  const output = collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    signal: controller.signal,
+    messages: [{
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "run a long command" }],
+    }],
+  }));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  controller.abort();
+
+  const chunks = await output;
+
+  assert.deepEqual(runtime.interruptions, [{ threadId: "thread-1", turnId: "turn-hanging" }]);
+  assert.equal(chunks.at(-1).reason.kind, "aborted");
+  assert.equal(chunks.at(-1).reason.failure.code, "ABORTED");
+});
+
 test("Codex reasoning efforts use compact native selector labels", async () => {
   const runtime = new FakeRuntime();
   runtime.models = [{
@@ -1158,6 +1226,27 @@ class ImageHistoryRuntime extends FakeRuntime {
       } });
     });
     return { id: turnId, status: "inProgress", items: [] };
+  }
+}
+
+class HangingInterruptRuntime extends FakeRuntime {
+  constructor(interruptError = null) {
+    super();
+    this.interruptError = interruptError;
+    this.interruptions = [];
+  }
+
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    return { id: "turn-hanging", status: "inProgress", items: [] };
+  }
+
+  async interruptTurn(threadId, turnId) {
+    this.interruptions.push({ threadId, turnId });
+    if (this.interruptError) {
+      this.interruptError.code = "CODEX_TURN_INTERRUPT_CLEANUP_FAILED";
+      throw this.interruptError;
+    }
   }
 }
 
