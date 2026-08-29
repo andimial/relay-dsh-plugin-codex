@@ -3,7 +3,7 @@ import { basename, resolve } from "node:path";
 
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 
-import { importCodexGeneratedImage, importCodexImage } from "./codex-image.js";
+import { importCodexGeneratedImage, importCodexImage, importCodexMcpImage } from "./codex-image.js";
 import { materializeCodexAttachment } from "./codex-image-input.js";
 import { CODEX_APP_DYNAMIC_TOOLS, codexDynamicTools } from "./codex-tools.js";
 import { rebindRequiredStatus } from "./connection-status.mjs";
@@ -773,6 +773,38 @@ export class CodexDshAdapter extends LlmAdapter {
       const key = state.commandKeys.get(item.id) ?? commandOutputKey(item);
       state.closedCommands.add(key);
       return completeCommandOutput(state, key, item.aggregatedOutput);
+    }
+    if (item.type === "mcpToolCall" && item.status === "completed") {
+      const content = Array.isArray(item.result?.content) ? item.result.content : [];
+      const images = content.map((entry, contentIndex) => ({ entry, contentIndex }))
+        .filter(({ entry }) => entry?.type === "image");
+      if (!this.attachments || images.length === 0) return [];
+      const chunks = [];
+      for (const { entry, contentIndex } of images) {
+        const index = state.nextIndex++;
+        try {
+          const attachment = await importCodexMcpImage(entry, item.id, contentIndex, this.attachments);
+          chunks.push(
+            { type: "block-start", index, blockType: "image" },
+            { type: "block-end", index, block: { type: "image", attachment } },
+          );
+        } catch (error) {
+          const reason = imagePreviewFailureReason(error);
+          this.logger.warn?.("Codex MCP image preview unavailable", {
+            threadId,
+            turnId,
+            itemId: item.id,
+            itemType: item.type,
+            contentIndex,
+            reason,
+          });
+          chunks.push(
+            { type: "block-start", index, blockType: "text" },
+            { type: "block-end", index, block: { type: "text", text: `MCP image preview unavailable: ${item.server}/${item.tool}.` } },
+          );
+        }
+      }
+      return chunks;
     }
     if (item.type === "imageGeneration" || item.type === "imageView") {
       if (!this.attachments) return [];
