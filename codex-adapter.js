@@ -657,17 +657,43 @@ export class CodexDshAdapter extends LlmAdapter {
         resolve(agent.session.header.cwd ?? process.cwd()),
         resolve(homedir(), ".codex", "generated_images"),
       ];
-      const attachment = item.type === "imageGeneration"
-        ? await importCodexGeneratedImage(item, roots, this.attachments)
-        : await importCodexImage(item.path, roots, this.attachments);
       const index = state.nextIndex++;
-      return [
-        { type: "block-start", index, blockType: "image" },
-        { type: "block-end", index, block: { type: "image", attachment } },
-      ];
+      try {
+        const attachment = item.type === "imageGeneration"
+          ? await importCodexGeneratedImage(item, roots, this.attachments)
+          : await importCodexImage(item.path, roots, this.attachments);
+        return [
+          { type: "block-start", index, blockType: "image" },
+          { type: "block-end", index, block: { type: "image", attachment } },
+        ];
+      } catch (error) {
+        const label = basename(item.path ?? item.savedPath ?? `codex-${item.id}`);
+        const reason = imagePreviewFailureReason(error);
+        this.logger.warn?.("Codex image preview unavailable", {
+          threadId,
+          turnId,
+          itemId: item.id,
+          itemType: item.type,
+          reason,
+        });
+        return [
+          { type: "block-start", index, blockType: "text" },
+          { type: "block-end", index, block: { type: "text", text: `Image preview unavailable: ${label}.` } },
+        ];
+      }
     }
     return [];
   }
+}
+
+function imagePreviewFailureReason(error) {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "image path is outside the Codex workspace") return "IMAGE_PATH_OUTSIDE_ROOT";
+  if (message === "Codex image result is not valid base64") return "IMAGE_BASE64_INVALID";
+  if (message === "Codex image result has an invalid size") return "IMAGE_SIZE_INVALID";
+  if (message === "unsupported or malformed Codex image data") return "IMAGE_DATA_INVALID";
+  if (message === "Declared image type does not match its bytes.") return "IMAGE_TYPE_MISMATCH";
+  return "IMAGE_ATTACHMENT_REJECTED";
 }
 
 function importedResumeError(threadId, cause) {

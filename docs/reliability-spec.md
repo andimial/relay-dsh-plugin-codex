@@ -83,6 +83,27 @@ Thread, Turn, and Item.
 DSH may replay the same still-pending approval rpc id after a browser
 disconnect. That replay is safe only while the ownership tuple remains valid.
 
+## Image projection and failure isolation
+
+Codex `imageView` and `imageGeneration` items are admitted according to their
+encoded byte signature, not a local filename extension or unverified data-URI
+declaration. PNG, JPEG, GIF, and WebP signatures map to the corresponding DSH
+media type. The DSH attachment store remains the authority for full decode,
+normalization, size, and pixel-limit validation.
+
+A filename such as `completed-clean.png` may therefore produce an
+`image/jpeg` attachment when its bytes are JPEG. Workspace and generated-image
+root checks still run before any local file is read; byte detection does not
+expand the allowed filesystem boundary.
+
+Image preview admission and storage are projection concerns. Failure of one
+image emits one terminal text placeholder and a Host warning containing only a
+stable reason code and the owning Thread, Turn, and Item identifiers. Raw
+storage errors and absolute paths are not projected or logged. Projection then
+continues through later Codex items and the source Turn's terminal status. It
+must not throw out of the adapter stream, mark an otherwise successful DSH Turn
+as failed, or interrupt the backing Codex Thread.
+
 ## Platform contract
 
 The bundled launcher supports darwin, linux, and win32 on arm64 and x64 using
