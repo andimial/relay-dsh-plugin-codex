@@ -1,13 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CodexAppServerClient, NATIVE_CODEX_APP_SERVER_ARGS } from "../app-server-client.mjs";
+import { CodexAppServerClient, RELAY_CODEX_APP_SERVER_ARGS } from "../app-server-client.mjs";
 
-test("default App Server launch arguments match native Codex Desktop", () => {
+test("default App Server launch disables persistent shell environment snapshots", () => {
   const client = new CodexAppServerClient();
-  assert.deepEqual(client.appServerArgs, NATIVE_CODEX_APP_SERVER_ARGS);
+  assert.deepEqual(client.appServerArgs, RELAY_CODEX_APP_SERVER_ARGS);
+  assert.deepEqual(client.appServerArgs, [
+    "-c",
+    "features.code_mode_host=true",
+    "-c",
+    "features.shell_snapshot=false",
+    "app-server",
+    "--analytics-default-enabled",
+  ]);
   assert.equal(client.command, process.execPath);
   assert.equal(client.commandSource, "bundled");
+});
+
+test("explicit App Server arguments remain an exact operator override", () => {
+  const args = ["-c", "features.shell_snapshot=true", "app-server"];
+  const client = new CodexAppServerClient({ args });
+  assert.deepEqual(client.appServerArgs, args);
+  assert.notEqual(client.appServerArgs, args);
 });
 
 test("a missing Codex executable reports an actionable configuration error", async () => {

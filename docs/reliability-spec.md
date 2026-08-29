@@ -14,6 +14,14 @@ the pinned `@openai/codex` package and its platform optional dependency. A
 global `codex` command is not required. `codexCommand` overrides
 `RELAY_CODEX_COMMAND`, which overrides the bundled launcher.
 
+The default launcher disables Codex `features.shell_snapshot`. Shell commands still
+receive the effective Codex child environment; Relay does not turn secret delivery
+into transcript text or strip variables merely because their names contain `KEY`,
+`SECRET`, or `TOKEN`. Disabling snapshots prevents Codex from serializing that complete
+effective environment into durable files under `CODEX_HOME/shell_snapshots`. Explicit
+operator-supplied App Server arguments remain an exact override and carry responsibility
+for any snapshot policy they enable.
+
 The observable state machine is:
 
 | State | Meaning | Required user behavior |
@@ -29,6 +37,15 @@ User-facing status must never expose raw `spawn codex ENOENT`. Stable error
 codes include `CODEX_EXECUTABLE_NOT_FOUND`, `CODEX_RUNTIME_MISSING`,
 `CODEX_PLATFORM_UNSUPPORTED`, `CODEX_APP_SERVER_NOT_RUNNING`,
 `CODEX_APP_SERVER_CONNECTION_FAILED`, and `CODEX_REBIND_REQUIRED`.
+
+## Shell environment persistence
+
+A Host-only environment secret may be inherited by an intended shell consumer without
+appearing in DSH messages, Codex rollout events, plugin diagnostics, or regular Codex
+state files. The Relay default must create no shell snapshot at all, because name-based
+redaction cannot identify every secret and filtering the command environment would break
+legitimate consumers. Restart and resume preserve the Session/Thread binding without
+backfilling a snapshot for an earlier or later command.
 
 ## Backend model selection
 
