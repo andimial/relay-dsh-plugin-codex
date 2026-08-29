@@ -132,11 +132,3 @@
   outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
-
-.marker {
-  display: none;
-}
-
-:global([data-relay-simple-conversation='true'] [role='tablist']) {
-  display: none;
-}

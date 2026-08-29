@@ -6,6 +6,14 @@ const clientSource = await readFile(
   new URL("../src/client/index.ts", import.meta.url),
   "utf8",
 );
+const advancedDebugSource = await readFile(
+  new URL("../src/client/AdvancedDebug.tsx", import.meta.url),
+  "utf8",
+);
+const advancedDebugStyles = await readFile(
+  new URL("../src/client/AdvancedDebug.module.css", import.meta.url),
+  "utf8",
+);
 
 test("advanced debugging stays additive to DSH's native conversation", () => {
   assert.match(clientSource, /conversation\.session\.header\.actions/);
@@ -16,4 +24,9 @@ test("advanced debugging stays additive to DSH's native conversation", () => {
   assert.doesNotMatch(clientSource, /name: 'conversation\.view'/);
   assert.doesNotMatch(clientSource, /name: 'conversation\.session'/);
   assert.doesNotMatch(clientSource, /name: 'conversation\.session\.header'/);
+
+  assert.doesNotMatch(clientSource, /AdvancedDebugGuard/);
+  assert.doesNotMatch(advancedDebugSource, /data-relay-simple-conversation/);
+  assert.doesNotMatch(advancedDebugSource, /MutationObserver/);
+  assert.doesNotMatch(advancedDebugStyles, /\[role=['"]tablist['"]\]/);
 });

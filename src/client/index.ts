@@ -6,7 +6,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { AdvancedDebugPreference } from '../../advanced-debug-preference.mjs'
 import { installModelSelection, type ModelSelectionContext } from '../../model-selection.mjs'
 import {
-  AdvancedDebugGuard,
   AdvancedDebugSection,
   HiddenSessionLogAction,
   type AdvancedDebugInjected,
@@ -97,10 +96,6 @@ function applyAdvancedDebug(ctx: ClientContext): void {
     label: () => t('advancedNav'), locale: 'relay.codex',
     inject: (): AdvancedDebugInjected => ({ ...hooks, setAdvancedDebug: enabled => { advancedDebug.set(enabled) } }),
   }, AdvancedDebugSection))
-  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
-    name: 'conversation.session.header.actions', id: 'relay-codex-advanced-debug-guard', order: -20,
-    inject: () => hooks,
-  }, AdvancedDebugGuard))
   ctx.slots.inject('conversation.session.header.utilities', () => {
     let removeShadow: (() => void) | undefined
     const reconcile = (): void => {

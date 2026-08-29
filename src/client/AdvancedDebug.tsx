@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import type {
   InjectFace, PropsLocale, PropsRuntime,
 } from '@deepseek-ai/dsh-client-ui-slots'
@@ -19,9 +19,6 @@ export interface AdvancedDebugInjected {
 type AdvancedDebugSectionProps = PropsRuntime<'settings.section'>
   & InjectFace<AdvancedDebugInjected>
   & PropsLocale<'relay.codex'>
-
-type AdvancedDebugGuardProps = PropsRuntime<'conversation.session.header.actions'>
-  & InjectFace<Pick<AdvancedDebugInjected, 'hooks'>>
 
 export function AdvancedDebugSection({
   useAdvancedDebug, setAdvancedDebug, t,
@@ -56,42 +53,6 @@ export function AdvancedDebugSection({
       </div>
     </section>
   )
-}
-
-export function AdvancedDebugGuard({ useAdvancedDebug }: AdvancedDebugGuardProps): ReactNode {
-  const enabled = useAdvancedDebug(value => value)
-  const marker = useRef<HTMLSpanElement>(null)
-
-  useLayoutEffect(() => {
-    const header = marker.current?.closest('header')
-    if (header === undefined || header === null) return
-    if (enabled) {
-      header.removeAttribute('data-relay-simple-conversation')
-    } else {
-      // This additive header slot has no view-store API, so keep DSH as the
-      // state owner by dispatching through its native first (Chat) tab.
-      const selectChat = (): void => {
-        const chatTab = header.querySelector<HTMLButtonElement>('[role="tablist"] [role="tab"]')
-        if (chatTab?.getAttribute('aria-selected') !== 'true') chatTab?.click()
-      }
-      selectChat()
-      header.setAttribute('data-relay-simple-conversation', 'true')
-      const observer = new MutationObserver(selectChat)
-      observer.observe(header, {
-        attributes: true,
-        attributeFilter: ['aria-selected'],
-        childList: true,
-        subtree: true,
-      })
-      return () => {
-        observer.disconnect()
-        header.removeAttribute('data-relay-simple-conversation')
-      }
-    }
-    return () => { header.removeAttribute('data-relay-simple-conversation') }
-  }, [enabled])
-
-  return <span ref={marker} className={css.marker} aria-hidden="true" />
 }
 
 export function HiddenSessionLogAction(): null {

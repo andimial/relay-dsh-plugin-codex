@@ -88,6 +88,36 @@ test("a Relay activation reaches Codex instead of replaying the previous human m
   assert.equal(runtime.sent[0].message.text, "[RELAY EXTERNAL EVENT]\nevent_json: {\"marker\":\"ready\"}");
 });
 
+test("an explicitly invoked DSH skill reaches Codex after the original user message", async () => {
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  for await (const _chunk of adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [
+      {
+        role: "user",
+        source: { kind: "user" },
+        content: [{ type: "text", text: "/diagnosing-bugs reproduce this" }],
+      },
+      {
+        role: "user",
+        source: { kind: "skill-invocation", name: "diagnosing-bugs", form: "instructions" },
+        content: [{ type: "text", text: "<skill_content>DIAGNOSTIC INSTRUCTIONS</skill_content>" }],
+      },
+    ],
+  })) {}
+
+  assert.equal(
+    runtime.sent[0].message.text,
+    "/diagnosing-bugs reproduce this\n\n<skill_content>DIAGNOSTIC INSTRUCTIONS</skill_content>",
+  );
+});
+
 test("user image messages are forwarded as Codex local image inputs", async () => {
   const runtime = new FakeRuntime();
   const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });

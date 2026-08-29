@@ -866,6 +866,8 @@ function reasoningEffortName(value) {
 }
 
 function latestUserInput(messages) {
+  let input = null;
+  let inputIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role !== "user") continue;
@@ -878,9 +880,34 @@ function latestUserInput(messages) {
     const localImages = (message.content ?? [])
       .map(localImage)
       .filter(Boolean);
-    if (text || localImages.length > 0) return { text, localImages };
+    if (text || localImages.length > 0) {
+      input = { text, localImages };
+      inputIndex = index;
+      break;
+    }
   }
-  return null;
+  if (input === null) return null;
+
+  const skillInstructions = messages
+    .slice(inputIndex + 1)
+    .filter(message => message?.role === "user" && isSkillInvocation(message.source))
+    .map(message => (message.content ?? [])
+      .filter(block => block.type === "text")
+      .map(block => block.text)
+      .join("\n")
+      .trim())
+    .filter(Boolean);
+  return {
+    text: [input.text, ...skillInstructions].filter(Boolean).join("\n\n"),
+    localImages: input.localImages,
+  };
+}
+
+function isSkillInvocation(source) {
+  return source?.kind === "skill-invocation"
+    && source.form === "instructions"
+    && typeof source.name === "string"
+    && source.name.length > 0;
 }
 
 function localImage(block) {

@@ -1,3 +1,9 @@
-# Codex owns the model context, tools, sandbox, and approvals. Relay's host
-# adapter binds this otherwise-empty DSH presentation Session to App Server.
-[]
+# Codex owns model context, native tools, sandbox, and approvals. DSH still
+# provides its scope-aware skill catalog and loader for this presentation
+# Session; the adapter forwards both model tool calls and explicit /skill
+# instruction injections to App Server.
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'

@@ -174,7 +174,7 @@ export function WorkspaceImportAction({
       <Tooltip label={t('importAction')} delayMs={500} disabled={wide}>
         <button
           type="button"
-          className={css.trigger}
+          className={`${css.trigger} ${wide ? css.triggerWide : css.triggerCollapsed}`}
           aria-label={t('importAction')}
           onClick={begin}
         >
