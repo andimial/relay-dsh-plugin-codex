@@ -17,6 +17,7 @@ import {
   detectImageMediaType,
   importCodexGeneratedImage,
   importCodexImage,
+  importCodexMcpImage,
 } from "../codex-image.js";
 import { CodexLinkStore } from "../codex-link-store.js";
 import { CODEX_APP_DYNAMIC_TOOLS, handleCodexServerRequest } from "../codex-tools.js";
@@ -1014,6 +1015,13 @@ test("Codex images are imported through the DSH attachment store and cannot esca
   }, [workspace], attachments);
   assert.equal(saved[1].mediaType, "image/jpeg");
   assert.equal(saved[1].name, "codex-generated.jpg");
+  const unpaddedJpeg = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
+  await importCodexGeneratedImage({
+    id: "generated-unpadded",
+    result: unpaddedJpeg.toString("base64").replace(/=+$/, ""),
+  }, [workspace], attachments);
+  assert.equal(saved[2].mediaType, "image/jpeg");
+  assert.equal(saved[2].name, "codex-generated-unpadded.jpg");
   await assert.rejects(importCodexImage(textPath, [workspace], attachments), /unsupported or malformed Codex image data/);
   await assert.rejects(allowedRealPath(outsidePath, [workspace]), /outside the Codex workspace/);
   await assert.rejects(allowedRealPath(join(workspace, "escaped.png"), [workspace]), /outside the Codex workspace/);
@@ -1029,6 +1037,167 @@ test("Codex image media types are derived from supported byte signatures", () =>
   ];
 
   for (const [data, expected] of samples) assert.equal(detectImageMediaType(data), expected);
+});
+
+test("completed MCP image results reach DSH attachments in exact content order", async () => {
+  const first = pngFixture("MCP_IMAGE_FIRST_9914");
+  const second = Buffer.concat([Buffer.from("GIF89a", "ascii"), Buffer.from("MCP_IMAGE_SECOND_9914")]);
+  const runtime = new McpImageRuntime({
+    type: "mcpToolCall",
+    id: "mcp-result-9914",
+    server: "relay_results_9914",
+    tool: "result_image_9914",
+    status: "completed",
+    result: {
+      content: [
+        { type: "text", text: "MCP_IMAGE_META_9914" },
+        { type: "image", mimeType: "image/png", data: first.toString("base64") },
+        { type: "resource", resource: { uri: "fixture://ignored" } },
+        { type: "image", mimeType: "image/gif", data: second.toString("base64") },
+      ],
+      structuredContent: { type: "image", data: "must-not-be-projected" },
+      _meta: null,
+    },
+    error: null,
+  });
+  const saved = [];
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    attachments: {
+      async saveImage(input) {
+        saved.push(input);
+        return {
+          attachmentId: `mcp-att-${saved.length}`,
+          mediaType: input.mediaType,
+          bytes: input.data.length,
+          name: input.name,
+        };
+      },
+    },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "show MCP image" }] }],
+  }));
+
+  assert.equal(saved.length, 2);
+  assert.deepEqual(saved.map(entry => entry.mediaType), ["image/png", "image/gif"]);
+  assert.deepEqual(saved.map(entry => Buffer.from(entry.data)), [first, second]);
+  assert.deepEqual(saved.map(entry => entry.name), [
+    "codex-mcp-mcp-result-9914-2.png",
+    "codex-mcp-mcp-result-9914-4.gif",
+  ]);
+  assert.deepEqual(chunks.filter(chunk => chunk.block?.type === "image").map(chunk => chunk.block.attachment.attachmentId), [
+    "mcp-att-1",
+    "mcp-att-2",
+  ]);
+  assert.equal(chunks.some(chunk => JSON.stringify(chunk).includes("must-not-be-projected")), false);
+  assert.equal(chunks.find(chunk => chunk.block?.text === "MCP_IMAGE_SEEN")?.block.text, "MCP_IMAGE_SEEN");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+});
+
+test("malformed or rejected MCP images become sanitized placeholders without failing the Turn", async () => {
+  const png = pngFixture("MCP_IMAGE_FAILURE_9914");
+  const warnings = [];
+  const runtime = new McpImageRuntime({
+    type: "mcpToolCall",
+    id: "mcp-result-bad/identifier",
+    server: "relay_results_9914",
+    tool: "result_image_9914",
+    status: "completed",
+    result: {
+      content: [
+        { type: "image", mimeType: "image/png", data: "not base64" },
+        { type: "image", mimeType: "image/bmp", data: png.toString("base64") },
+        { type: "image", mimeType: "image/jpeg", data: png.toString("base64") },
+        { type: "image", mimeType: "image/png", data: png.toString("base64") },
+      ],
+      structuredContent: null,
+      _meta: null,
+    },
+    error: null,
+  });
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    logger: { warn(message, details) { warnings.push({ message, details }); } },
+    attachments: { async saveImage() { throw new Error("storage failed at /private/customer/image.png"); } },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "show malformed MCP images" }] }],
+  }));
+
+  assert.equal(chunks.filter(chunk => chunk.block?.text?.startsWith("MCP image preview unavailable")).length, 4);
+  assert.equal(chunks.find(chunk => chunk.block?.text === "MCP_IMAGE_SEEN")?.block.text, "MCP_IMAGE_SEEN");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+  assert.deepEqual(warnings.map(entry => entry.details.reason), [
+    "IMAGE_BASE64_INVALID",
+    "IMAGE_DATA_INVALID",
+    "IMAGE_TYPE_MISMATCH",
+    "IMAGE_ATTACHMENT_REJECTED",
+  ]);
+  assert.equal(JSON.stringify({ chunks, warnings }).includes("/private/customer/image.png"), false);
+});
+
+test("MCP image decoding rejects oversized payloads before attachment storage", async () => {
+  const oversized = Buffer.alloc(25 * 1024 * 1024 + 1).toString("base64");
+  let saves = 0;
+  await assert.rejects(importCodexMcpImage({
+    type: "image",
+    mimeType: "image/png",
+    data: oversized,
+  }, "oversized", 0, {
+    async saveImage() { saves += 1; },
+  }), /invalid size/);
+  assert.equal(saves, 0);
+});
+
+test("failed MCP tool results never synthesize image blocks", async () => {
+  const runtime = new McpImageRuntime({
+    type: "mcpToolCall",
+    id: "mcp-result-failed",
+    server: "relay_results_9914",
+    tool: "result_image_9914",
+    status: "failed",
+    result: {
+      content: [{ type: "image", mimeType: "image/png", data: pngFixture("IGNORED").toString("base64") }],
+      structuredContent: null,
+      _meta: null,
+    },
+    error: { message: "fixture failure" },
+  });
+  let saves = 0;
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    attachments: { async saveImage() { saves += 1; } },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "failed MCP" }] }],
+  }));
+
+  assert.equal(saves, 0);
+  assert.equal(chunks.some(chunk => chunk.block?.type === "image"), false);
+  assert.equal(chunks.find(chunk => chunk.block?.text === "MCP_IMAGE_SEEN")?.block.text, "MCP_IMAGE_SEEN");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
 });
 
 test("the original JPEG-as-.png Session history replays without failing the DSH turn", async (context) => {
@@ -2018,6 +2187,32 @@ class ImageHistoryRuntime extends FakeRuntime {
         threadId,
         turn: { id: turnId, status: "completed", error: null, items: [] },
       } });
+    });
+    return { id: turnId, status: "inProgress", items: [] };
+  }
+}
+
+class McpImageRuntime extends FakeRuntime {
+  constructor(item) {
+    super();
+    this.item = item;
+  }
+
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-mcp-image";
+    queueMicrotask(() => {
+      this.emit("activity", notification("item/completed", threadId, turnId, { item: this.item }));
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "agentMessage", id: "mcp-image-answer", text: "MCP_IMAGE_SEEN", phase: "final_answer" },
+      }));
+      this.emit("activity", {
+        method: "turn/completed",
+        params: {
+          threadId,
+          turn: { id: turnId, status: "completed", error: null, items: [this.item] },
+        },
+      });
     });
     return { id: turnId, status: "inProgress", items: [] };
   }

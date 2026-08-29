@@ -64,6 +64,8 @@ test('reliability spec, READMEs, and acceptance matrix describe the implemented 
   assert.match(reliabilitySpec, /CODEX_STALE_APPROVAL/)
   assert.match(reliabilitySpec, /binding epoch/)
   assert.match(reliabilitySpec, /Subagent interaction ownership/)
+  assert.match(reliabilitySpec, /completed App Server `mcpToolCall`/)
+  assert.match(reliabilityAcceptance, /I6 MCP image result/)
   assert.match(
     reliabilityAcceptance,
     /disconnect\s*\/\s*pending approval\s*\/\s*reconnect/i,

@@ -135,6 +135,20 @@ continues through later Codex items and the source Turn's terminal status. It
 must not throw out of the adapter stream, mark an otherwise successful DSH Turn
 as failed, or interrupt the backing Codex Thread.
 
+A completed App Server `mcpToolCall` may carry standard MCP image entries in
+`result.content`. Each `type: image` entry is decoded independently in content order,
+limited to 25 MiB, and admitted only when its declared supported MIME exactly matches
+the encoded PNG, JPEG, GIF, or WebP signature. Text, resources, and
+`structuredContent` are not reinterpreted as images. Valid bytes are saved directly
+through the owning DSH attachment service with deterministic sanitized names; no
+temporary Workspace file is created.
+
+Malformed base64, unsupported or mismatched media, oversized data, and attachment
+storage rejection follow the same failure-isolation contract: one sanitized placeholder
+and stable warning reason per failed image, followed by the remaining MCP images and
+the source Turn's final answer. Raw base64, storage errors, and private paths are never
+logged or projected.
+
 ## DSH image input transport
 
 DSH user image blocks normally contain a content-addressed attachment reference,
