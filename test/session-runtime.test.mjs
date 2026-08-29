@@ -34,7 +34,7 @@ test("Codex threads keep their context across turns, switching, and resume", asy
   assert.deepEqual(client.requests.find(request => request.method === "thread/resume").params.dynamicTools, tools);
   const firstTurn = client.requests.find(request => request.method === "turn/start");
   assert.deepEqual(firstTurn.params.input, [{ type: "text", text: "first turn", text_elements: [] }]);
-  assert.equal(firstTurn.params.summary, "none");
+  assert.equal(firstTurn.params.summary, "auto");
   assert.equal(firstTurn.params.sandboxPolicy.networkAccess, false);
   assert.equal(firstTurn.params.permissions, null);
   assert.equal(firstTurn.params.runtimeWorkspaceRoots, null);
@@ -114,6 +114,20 @@ test("Codex image turns use native localImage input and attachment metadata", as
   assert.equal(turn.params.permissions, ":workspace");
   assert.equal(turn.params.runtimeWorkspaceRoots[0], "/workspace/relay");
   assert.match(turn.params.runtimeWorkspaceRoots[1], /\/\.codex\/visualizations\/\d{4}\/\d{2}\/\d{2}\/thread-1$/);
+  await runtime.close();
+});
+
+test("business Turns request public reasoning summaries and internal callers can disable them", async () => {
+  const client = new FakeCodexClient();
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+  await runtime.initialize();
+  const session = await runtime.createSession({ model: "codex-test", effort: "high" });
+
+  await runtime.sendMessage(session.id, { text: "business reasoning" });
+  await runtime.sendMessage(session.id, { text: "auxiliary reasoning", reasoningSummary: "none" });
+
+  const turns = client.requests.filter(request => request.method === "turn/start");
+  assert.deepEqual(turns.map(turn => turn.params.summary), ["auto", "none"]);
   await runtime.close();
 });
 

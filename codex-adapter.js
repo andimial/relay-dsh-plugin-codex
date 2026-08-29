@@ -483,7 +483,11 @@ export class CodexDshAdapter extends LlmAdapter {
 
     let turnId = null;
     try {
-      const started = await this.runtime.sendMessage(threadId, { ...input, ...config });
+      const started = await this.runtime.sendMessage(threadId, {
+        ...input,
+        ...config,
+        reasoningSummary: "auto",
+      });
       turnId = started.id;
       this.recordOwnedTurn(sessionId, turnId);
       const state = createStreamState();
@@ -570,6 +574,7 @@ export class CodexDshAdapter extends LlmAdapter {
         effort: options.reasoningEffort,
         sandbox: "read-only",
         approvalPolicy: "never",
+        reasoningSummary: "none",
       });
       turnId = started.id;
       const state = createStreamState();
@@ -888,6 +893,7 @@ function textDelta(state, id, type, delta) {
 function completeTextItem(state, id, type, completeText) {
   const chunks = [];
   let block = state.blocks.get(id);
+  if (!block && !completeText) return chunks;
   if (!block) {
     block = { index: state.nextIndex++, type, text: "", closed: false };
     state.blocks.set(id, block);
