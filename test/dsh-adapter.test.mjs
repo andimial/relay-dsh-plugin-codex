@@ -9,7 +9,12 @@ import {
   CODEX_THREAD_ACTIVE_WRITER,
   CodexDshAdapter,
 } from "../codex-adapter.js";
-import { allowedRealPath, importCodexGeneratedImage, importCodexImage } from "../codex-image.js";
+import {
+  allowedRealPath,
+  detectImageMediaType,
+  importCodexGeneratedImage,
+  importCodexImage,
+} from "../codex-image.js";
 import { CodexLinkStore } from "../codex-link-store.js";
 import { CODEX_APP_DYNAMIC_TOOLS, handleCodexServerRequest } from "../codex-tools.js";
 
@@ -674,7 +679,8 @@ test("Codex images are imported through the DSH attachment store and cannot esca
   const imagePath = join(workspace, "result.png");
   const textPath = join(workspace, "secret.txt");
   const outsidePath = join(outside, "outside.png");
-  await writeFile(imagePath, "png-bytes");
+  const jpeg = await readFile(new URL("../docs/images/dsh-new-session-backends.jpg", import.meta.url));
+  await writeFile(imagePath, jpeg);
   await writeFile(textPath, "not-an-image");
   await writeFile(outsidePath, "outside");
   await symlink(outsidePath, join(workspace, "escaped.png"));
@@ -688,12 +694,145 @@ test("Codex images are imported through the DSH attachment store and cannot esca
 
   const ref = await importCodexImage(imagePath, [workspace], attachments);
   assert.equal(ref.attachmentId, "att-1");
-  assert.equal(saved[0].mediaType, "image/png");
-  await importCodexGeneratedImage({ id: "generated", result: Buffer.from("png-bytes").toString("base64") }, [workspace], attachments);
-  assert.equal(saved[1].name, "codex-generated.png");
-  await assert.rejects(importCodexImage(textPath, [workspace], attachments), /unsupported Codex image type/);
+  assert.equal(saved[0].mediaType, "image/jpeg");
+  assert.equal(saved[0].name, "result.png");
+  assert.equal(detectImageMediaType(saved[0].data), "image/jpeg");
+  await importCodexGeneratedImage({
+    id: "generated",
+    result: `data:image/png;base64,${jpeg.toString("base64")}`,
+  }, [workspace], attachments);
+  assert.equal(saved[1].mediaType, "image/jpeg");
+  assert.equal(saved[1].name, "codex-generated.jpg");
+  await assert.rejects(importCodexImage(textPath, [workspace], attachments), /unsupported or malformed Codex image data/);
   await assert.rejects(allowedRealPath(outsidePath, [workspace]), /outside the Codex workspace/);
   await assert.rejects(allowedRealPath(join(workspace, "escaped.png"), [workspace]), /outside the Codex workspace/);
+});
+
+test("Codex image media types are derived from supported byte signatures", () => {
+  const samples = [
+    [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), "image/png"],
+    [Buffer.from([0xff, 0xd8, 0xff]), "image/jpeg"],
+    [Buffer.from("GIF89a", "ascii"), "image/gif"],
+    [Buffer.from("RIFF0000WEBP", "ascii"), "image/webp"],
+    [Buffer.from("not-an-image", "ascii"), null],
+  ];
+
+  for (const [data, expected] of samples) assert.equal(detectImageMediaType(data), expected);
+});
+
+test("the original JPEG-as-.png Session history replays without failing the DSH turn", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-history-image-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const imagePath = join(directory, "completed-clean.png");
+  const jpeg = await readFile(new URL("../docs/images/dsh-new-session-backends.jpg", import.meta.url));
+  await writeFile(imagePath, jpeg);
+
+  assert.equal(imagePath.endsWith(".png"), true);
+  assert.equal(detectImageMediaType(jpeg), "image/jpeg");
+
+  const runtime = new ImageHistoryRuntime(imagePath);
+  const warnings = [];
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    logger: { warn(message, details) { warnings.push({ message, details }); } },
+    attachments: {
+      async saveImage(input) {
+        assert.equal(input.mediaType, "image/jpeg");
+        return {
+          attachmentId: "sha256:history-image",
+          mediaType: input.mediaType,
+          bytes: input.data.length,
+          width: 1,
+          height: 1,
+          name: input.name,
+        };
+      },
+    },
+  });
+  const agent = fakeAgent({ id: "session-6f78fa6a-bc1d-4be9-b15b-264d5f743c05" });
+  agent.session.header.cwd = directory;
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "continue" }] }],
+  }));
+
+  assert.equal(chunks.find(chunk => chunk.block?.type === "image")?.block.attachment.mediaType, "image/jpeg");
+  assert.equal(chunks.find(chunk => chunk.block?.type === "text")?.block.text, "done after image");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+  assert.deepEqual(warnings, []);
+});
+
+test("an invalid Codex image becomes a placeholder without failing the DSH turn", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-invalid-image-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const imagePath = join(directory, "broken.png");
+  await writeFile(imagePath, "not an image");
+
+  const warnings = [];
+  const runtime = new ImageHistoryRuntime(imagePath);
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    logger: { warn(message, details) { warnings.push({ message, details }); } },
+    attachments: { async saveImage() { throw new Error("invalid image reached attachment storage"); } },
+  });
+  const agent = fakeAgent();
+  agent.session.header.cwd = directory;
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "continue" }] }],
+  }));
+
+  assert.match(chunks.find(chunk => chunk.block?.text?.startsWith("Image preview unavailable"))?.block.text ?? "", /broken\.png/);
+  assert.equal(chunks.find(chunk => chunk.block?.text === "done after image")?.block.text, "done after image");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].details.itemId, "image-history-1");
+  assert.equal(warnings[0].details.reason, "IMAGE_DATA_INVALID");
+  assert.equal("error" in warnings[0].details, false);
+});
+
+test("a DSH image storage rejection is sanitized and does not fail the turn", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-rejected-image-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const imagePath = join(directory, "rejected.png");
+  const jpeg = await readFile(new URL("../docs/images/dsh-new-session-backends.jpg", import.meta.url));
+  await writeFile(imagePath, jpeg);
+
+  const warnings = [];
+  const runtime = new ImageHistoryRuntime(imagePath);
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    logger: { warn(message, details) { warnings.push({ message, details }); } },
+    attachments: { async saveImage() { throw new Error("decode failed at /private/customer/path"); } },
+  });
+  const agent = fakeAgent();
+  agent.session.header.cwd = directory;
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "continue" }] }],
+  }));
+
+  const serialized = JSON.stringify({ chunks, warnings });
+  assert.equal(serialized.includes("/private/customer/path"), false);
+  assert.match(chunks.find(chunk => chunk.block?.text?.startsWith("Image preview unavailable"))?.block.text ?? "", /rejected\.png/);
+  assert.equal(chunks.find(chunk => chunk.block?.text === "done after image")?.block.text, "done after image");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+  assert.equal(warnings[0].details.reason, "IMAGE_ATTACHMENT_REJECTED");
 });
 
 test("Codex interactions use DSH approval and question services without Relay Event tools", async () => {
@@ -994,6 +1133,31 @@ class FakeRuntime extends EventEmitter {
   async releaseSession(threadId) {
     this.released.push(threadId);
     this.sessions.delete(threadId);
+  }
+}
+
+class ImageHistoryRuntime extends FakeRuntime {
+  constructor(imagePath) {
+    super();
+    this.imagePath = imagePath;
+  }
+
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-history-1";
+    queueMicrotask(() => {
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "imageView", id: "image-history-1", path: this.imagePath },
+      }));
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "agentMessage", id: "answer-history-1", text: "done after image", phase: "final_answer" },
+      }));
+      this.emit("activity", { method: "turn/completed", params: {
+        threadId,
+        turn: { id: turnId, status: "completed", error: null, items: [] },
+      } });
+    });
+    return { id: turnId, status: "inProgress", items: [] };
   }
 }
 
