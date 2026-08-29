@@ -533,8 +533,13 @@ export class CodexDshAdapter extends LlmAdapter {
       }
     } catch (error) {
       if (options.signal?.aborted) {
-        if (turnId) await this.runtime.interruptTurn(threadId, turnId).catch(() => {});
-        yield { type: "finish", reason: { kind: "aborted", failure: { message: "Codex turn cancelled", code: "ABORTED" } } };
+        yield await interruptedTurnFinish({
+          runtime: this.runtime,
+          logger: this.logger,
+          threadId,
+          turnId,
+          cancelledMessage: "Codex turn cancelled",
+        });
         return;
       }
       throw error;
@@ -613,8 +618,13 @@ export class CodexDshAdapter extends LlmAdapter {
       }
     } catch (error) {
       if (options.signal?.aborted) {
-        if (turnId) await this.runtime.interruptTurn(threadId, turnId).catch(() => {});
-        yield { type: "finish", reason: { kind: "aborted", failure: { message: `Codex ${options.purpose} cancelled`, code: "ABORTED" } } };
+        yield await interruptedTurnFinish({
+          runtime: this.runtime,
+          logger: this.logger,
+          threadId,
+          turnId,
+          cancelledMessage: `Codex ${options.purpose} cancelled`,
+        });
         return;
       }
       throw error;
@@ -694,6 +704,32 @@ function imagePreviewFailureReason(error) {
   if (message === "unsupported or malformed Codex image data") return "IMAGE_DATA_INVALID";
   if (message === "Declared image type does not match its bytes.") return "IMAGE_TYPE_MISMATCH";
   return "IMAGE_ATTACHMENT_REJECTED";
+}
+
+async function interruptedTurnFinish({ runtime, logger, threadId, turnId, cancelledMessage }) {
+  if (!turnId) {
+    return { type: "finish", reason: { kind: "aborted", failure: { message: cancelledMessage, code: "ABORTED" } } };
+  }
+  try {
+    await runtime.interruptTurn(threadId, turnId);
+    return { type: "finish", reason: { kind: "aborted", failure: { message: cancelledMessage, code: "ABORTED" } } };
+  } catch (error) {
+    logger.error?.("Codex interrupted work could not be confirmed terminated", {
+      threadId,
+      turnId,
+      code: error?.code ?? "CODEX_TURN_INTERRUPT_CLEANUP_FAILED",
+    });
+    return {
+      type: "finish",
+      reason: {
+        kind: "error",
+        failure: {
+          message: "Codex stopped the response, but could not confirm that its active command was terminated. Check the Workspace for late side effects.",
+          code: "CODEX_TURN_INTERRUPT_CLEANUP_FAILED",
+        },
+      },
+    };
+  }
 }
 
 function importedResumeError(threadId, cause) {

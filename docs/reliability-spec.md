@@ -104,6 +104,24 @@ continues through later Codex items and the source Turn's terminal status. It
 must not throw out of the adapter stream, mark an otherwise successful DSH Turn
 as failed, or interrupt the backing Codex Thread.
 
+## Turn interruption and process cleanup
+
+Stopping a DSH Codex Turn must stop both model generation and every active App
+Server background terminal owned by that Turn. Before sending `turn/interrupt`,
+the runtime identifies the Turn's in-progress `commandExecution` item ids and
+terminates only matching `thread/backgroundTerminals` process ids. It repeats
+discovery after interruption to close races and confirms that no matching
+terminal remains.
+
+Background terminals owned by another Turn are not terminated. The plugin must
+not use the thread-wide background-terminal cleanup operation for an ordinary
+Turn stop.
+
+The Turn is reported as aborted only after targeted cleanup and
+`turn/interrupt` succeed. If cleanup cannot be confirmed, the DSH Turn ends with
+`CODEX_TURN_INTERRUPT_CLEANUP_FAILED`, tells the user to check for late Workspace
+side effects, and logs only the stable code plus Thread and Turn identifiers.
+
 ## Platform contract
 
 The bundled launcher supports darwin, linux, and win32 on arm64 and x64 using

@@ -228,6 +228,116 @@ test("dynamic tool replies, question answers, permission replies, and interrupti
   await runtime.close();
 });
 
+test("turn interruption terminates only background processes owned by the interrupted Turn", async () => {
+  const client = new FakeCodexClient();
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+  await runtime.initialize();
+  const session = await runtime.createSession();
+  client.notify("turn/started", {
+    threadId: session.id,
+    turn: { id: "turn-live", status: "inProgress", error: null, items: [] },
+  });
+  client.notify("item/started", {
+    threadId: session.id,
+    turnId: "turn-live",
+    item: {
+      type: "commandExecution",
+      id: "command-target",
+      processId: "42",
+      command: "sleep 15; write-late-marker",
+      status: "inProgress",
+    },
+  });
+  client.backgroundTerminals = [
+    { itemId: "command-target", processId: "42", command: "write-late-marker" },
+    { itemId: "command-unrelated", processId: "99", command: "keep-running" },
+  ];
+
+  await runtime.interruptTurn(session.id, "turn-live");
+
+  assert.deepEqual(client.backgroundTerminals, [
+    { itemId: "command-unrelated", processId: "99", command: "keep-running" },
+  ]);
+  assert.deepEqual(client.requests
+    .filter(request => request.method.startsWith("thread/backgroundTerminals/")
+      || request.method === "turn/interrupt")
+    .map(request => [request.method, request.params.processId ?? null]), [
+      ["thread/backgroundTerminals/list", null],
+      ["thread/backgroundTerminals/terminate", "42"],
+      ["turn/interrupt", null],
+      ["thread/backgroundTerminals/list", null],
+      ["thread/backgroundTerminals/list", null],
+    ]);
+  await runtime.close();
+});
+
+test("turn interruption fails closed when targeted process cleanup cannot be confirmed", async () => {
+  const client = new FakeCodexClient();
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+  await runtime.initialize();
+  const session = await runtime.createSession();
+  client.notify("turn/started", {
+    threadId: session.id,
+    turn: { id: "turn-live", status: "inProgress", error: null, items: [] },
+  });
+  client.notify("item/started", {
+    threadId: session.id,
+    turnId: "turn-live",
+    item: {
+      type: "commandExecution",
+      id: "command-target",
+      processId: "42",
+      command: "sleep 15; write-late-marker",
+      status: "inProgress",
+    },
+  });
+  client.backgroundTerminals = [
+    { itemId: "command-target", processId: "42", command: "write-late-marker" },
+  ];
+  client.unterminableProcessIds.add("42");
+
+  await assert.rejects(runtime.interruptTurn(session.id, "turn-live"), error => {
+    assert.equal(error.code, "CODEX_TURN_INTERRUPT_CLEANUP_FAILED");
+    assert.equal(error.threadId, session.id);
+    assert.equal(error.turnId, "turn-live");
+    return true;
+  });
+  assert.equal(client.requests.some(request => request.method === "turn/interrupt"), true);
+  assert.equal(client.backgroundTerminals.length, 1);
+  await runtime.close();
+});
+
+test("turn interruption catches a background process that appears during the interrupt race", async () => {
+  const client = new InterruptRaceCodexClient();
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+  await runtime.initialize();
+  const session = await runtime.createSession();
+  client.notify("turn/started", {
+    threadId: session.id,
+    turn: { id: "turn-live", status: "inProgress", error: null, items: [] },
+  });
+  client.notify("item/started", {
+    threadId: session.id,
+    turnId: "turn-live",
+    item: {
+      type: "commandExecution",
+      id: "command-race",
+      processId: null,
+      command: "sleep 15; write-late-marker",
+      status: "inProgress",
+    },
+  });
+
+  await runtime.interruptTurn(session.id, "turn-live");
+
+  assert.deepEqual(client.backgroundTerminals, []);
+  assert.equal(client.requests.some(request => (
+    request.method === "thread/backgroundTerminals/terminate"
+      && request.params.processId === "84"
+  )), true);
+  await runtime.close();
+});
+
 test("only Relay-owned Codex threads are discovered and can be resumed after restart", async () => {
   const client = new FakeCodexClient();
   const first = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
@@ -367,6 +477,8 @@ class FakeCodexClient extends EventEmitter {
     this.threads = new Map();
     this.threadSequence = 0;
     this.turnSequence = 0;
+    this.backgroundTerminals = [];
+    this.unterminableProcessIds = new Set();
   }
 
   async start() {}
@@ -413,6 +525,20 @@ class FakeCodexClient extends EventEmitter {
     if (method === "thread/settings/update") return {};
     if (method === "turn/start") return this.startTurn(params);
     if (method === "turn/interrupt") return {};
+    if (method === "thread/backgroundTerminals/list") {
+      return { data: structuredClone(this.backgroundTerminals), nextCursor: null };
+    }
+    if (method === "thread/backgroundTerminals/terminate") {
+      if (this.unterminableProcessIds.has(String(params.processId))) {
+        throw new Error(`could not terminate process ${params.processId}`);
+      }
+      const index = this.backgroundTerminals.findIndex(terminal => (
+        String(terminal.processId) === String(params.processId)
+      ));
+      if (index === -1) return { terminated: false };
+      this.backgroundTerminals.splice(index, 1);
+      return { terminated: true };
+    }
     if (method === "thread/unsubscribe") return { status: "unsubscribed" };
     throw new Error(`unexpected request ${method}`);
   }
@@ -472,6 +598,20 @@ class PagedInventoryClient extends FakeCodexClient {
       ],
       nextCursor: "page-2",
     };
+  }
+}
+
+class InterruptRaceCodexClient extends FakeCodexClient {
+  async request(method, params = {}) {
+    const result = await super.request(method, params);
+    if (method === "turn/interrupt") {
+      this.backgroundTerminals.push({
+        itemId: "command-race",
+        processId: "84",
+        command: "write-late-marker",
+      });
+    }
+    return result;
   }
 }
 
