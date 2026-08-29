@@ -104,6 +104,30 @@ continues through later Codex items and the source Turn's terminal status. It
 must not throw out of the adapter stream, mark an otherwise successful DSH Turn
 as failed, or interrupt the backing Codex Thread.
 
+## DSH image input transport
+
+DSH user image blocks normally contain a content-addressed attachment reference,
+not a local path. Before creating or resuming a Codex Thread, the adapter reads
+each image through DSH's attachment service, preserves message order, and verifies
+the encoded PNG, JPEG, GIF, or WebP signature. Encoded bytes are authoritative
+when stored metadata or the display name disagrees.
+
+Verified bytes are materialized outside the Workspace under
+`$CODEX_HOME/dsh-input-images` (or the default `~/.codex` equivalent). Files use
+their SHA-256 digest plus a signature-derived extension, directories are private,
+and writes are atomic without replacing an existing digest. Repeated immutable
+attachments reuse the same verified path. The Workspace is not modified.
+
+The resulting path is sent through App Server `turn/start` as native
+`localImage` input and attachment metadata. Multiple images retain DSH order and
+pure-image messages are valid. Existing trusted path-backed image blocks remain
+supported.
+
+Missing/corrupt attachments, unavailable attachment service, invalid bytes,
+oversized data, and cancellation fail before a Codex Thread or Turn starts. They
+use stable `CODEX_IMAGE_*` codes and never silently degrade an image-bearing user
+message to text-only input.
+
 ## Turn interruption and process cleanup
 
 Stopping a DSH Codex Turn must stop both model generation and every active App

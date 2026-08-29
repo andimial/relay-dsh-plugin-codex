@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 
 import { importCodexGeneratedImage, importCodexImage } from "./codex-image.js";
+import { materializeCodexAttachment } from "./codex-image-input.js";
 import { CODEX_APP_DYNAMIC_TOOLS, codexDynamicTools } from "./codex-tools.js";
 import { rebindRequiredStatus } from "./connection-status.mjs";
 
@@ -454,7 +455,7 @@ export class CodexDshAdapter extends LlmAdapter {
     }
     const sessionId = String(options.sessionId ?? "");
     if (!sessionId) throw new Error("Relay Codex adapter requires a DSH session id");
-    const input = latestUserInput(options.messages);
+    const input = await latestUserInput(options.messages, this.attachments, options.signal);
     if (!input) throw new Error("Relay Codex adapter received no user text or image input");
     const agent = this.agents.get(sessionId);
     if (!agent) throw new Error(`Relay Codex adapter has no attached agent for ${sessionId}`);
@@ -926,7 +927,7 @@ function reasoningEffortName(value) {
   return String(value) === "xhigh" ? "Extra high" : humanize(value);
 }
 
-function latestUserInput(messages) {
+async function latestUserInput(messages, attachments, signal) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role !== "user") continue;
@@ -936,15 +937,17 @@ function latestUserInput(messages) {
       .map((block) => block.text)
       .join("\n")
       .trim();
-    const localImages = (message.content ?? [])
-      .map(localImage)
-      .filter(Boolean);
+    const localImages = [];
+    for (const block of message.content ?? []) {
+      const image = await localImage(block, attachments, signal);
+      if (image) localImages.push(image);
+    }
     if (text || localImages.length > 0) return { text, localImages };
   }
   return null;
 }
 
-function localImage(block) {
+async function localImage(block, attachments, signal) {
   if (block?.type !== "image" && block?.type !== "file") return null;
   if (block.type === "file" && !isImageFile(block)) return null;
   const path = block.path
@@ -957,6 +960,9 @@ function localImage(block) {
     ?? block.attachment?.fsPath
     ?? block.attachment?.filePath
     ?? block.attachment?.localPath;
+  if (!path && (block.type === "image" || block.attachment)) {
+    return materializeCodexAttachment(block, attachments, signal);
+  }
   if (!path) return null;
   return {
     path,
