@@ -83,6 +83,18 @@ Thread, Turn, and Item.
 DSH may replay the same still-pending approval rpc id after a browser
 disconnect. That replay is safe only while the ownership tuple remains valid.
 
+## Reasoning summary presentation
+
+Business Turns request App Server reasoning summaries with `summary: auto`.
+When Codex supplies a summary, the adapter projects its public summary deltas as
+one DSH reasoning block that remains distinct from the final answer. It never
+projects encrypted or raw hidden reasoning content.
+
+An App Server reasoning item with no public summary produces no DSH reasoning
+block rather than an empty `Think` disclosure. Ephemeral title and compaction
+Turns explicitly use `summary: none`; their internal work is not added to the
+business conversation and does not incur a presentation-only summary.
+
 ## Image projection and failure isolation
 
 Codex `imageView` and `imageGeneration` items are admitted according to their

@@ -279,7 +279,15 @@ export class CodexSessionRuntime extends EventEmitter {
     return publicSession(session);
   }
 
-  async sendMessage(threadId, { text, localImages = [], model, effort, sandbox, approvalPolicy } = {}) {
+  async sendMessage(threadId, {
+    text,
+    localImages = [],
+    model,
+    effort,
+    sandbox,
+    approvalPolicy,
+    reasoningSummary = "auto",
+  } = {}) {
     const session = this.requireSession(threadId);
     if (!text?.trim() && localImages.length === 0) throw new Error("message text or image input is required");
     const nextModel = model ?? session.model;
@@ -320,7 +328,7 @@ export class CodexSessionRuntime extends EventEmitter {
       serviceTier: null,
       effort: null,
       multiAgentMode: DEFAULT_MULTI_AGENT_MODE,
-      summary: "none",
+      summary: reasoningSummary === "none" ? "none" : "auto",
       personality: "friendly",
       responsesapiClientMetadata: { workspace_kind: "project" },
       outputSchema: null,

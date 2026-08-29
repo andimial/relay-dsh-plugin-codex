@@ -39,6 +39,7 @@ test("the Codex preset streams reasoning and answers into the native DSH convers
 
   assert.equal(runtime.sent[0].message.text, "actual question");
   assert.equal(runtime.sent[0].message.model, "codex-test");
+  assert.equal(runtime.sent[0].message.reasoningSummary, "auto");
   assert.equal(chunks.find(chunk => chunk.type === "reasoning-delta").text, "Checked the workspace.");
   assert.equal(chunks.find(chunk => chunk.type === "text-delta").text, "done");
   assert.equal(chunks.at(-1).replayState.threadId, "thread-1");
@@ -47,6 +48,25 @@ test("the Codex preset streams reasoning and answers into the native DSH convers
   assert.equal(runtime.createdConfig.dynamicTools.some(tool => tool.name === "relay_wait_for_event"), false);
   const codexAppTools = runtime.createdConfig.dynamicTools.find(tool => tool.type === "namespace" && tool.name === "codex_app");
   assert.deepEqual(codexAppTools.tools.map(tool => tool.name), ["load_workspace_dependencies"]);
+});
+
+test("an empty App Server reasoning item creates no empty DSH disclosure", async () => {
+  const runtime = new EmptyReasoningRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    reasoningEffort: "high",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "answer only" }] }],
+  }));
+
+  assert.equal(chunks.some(chunk => chunk.blockType === "reasoning" || chunk.block?.type === "reasoning"), false);
+  assert.equal(chunks.filter(chunk => chunk.type === "text-delta").map(chunk => chunk.text).join(""), "done");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
 });
 
 test("an unconfirmed command cleanup is surfaced instead of reporting a successful stop", async () => {
@@ -373,6 +393,8 @@ test("automatic title generation uses an isolated ephemeral Codex thread", async
   assert.equal(auxiliaryConfig.approvalPolicy, "never");
   assert.equal(auxiliaryConfig.threadSource, "relay.codex.auxiliary");
   assert.match(auxiliaryConfig.developerInstructions, /Do not call tools/);
+  assert.equal(mainCall.message.reasoningSummary, "auto");
+  assert.equal(titleCall.message.reasoningSummary, "none");
   assert.deepEqual(runtime.released, [titleCall.threadId]);
   assert.equal(mainChunks.find(chunk => chunk.type === "text-delta").text, "done");
   assert.equal(titleChunks.find(chunk => chunk.type === "text-delta").text, "项目文件查询");
@@ -451,6 +473,7 @@ test("DSH compaction also runs outside the bound Codex thread", async () => {
   assert.match(runtime.sent[0].message.text, /user: first request/);
   assert.match(runtime.sent[0].message.text, /assistant: first answer/);
   assert.match(runtime.sent[0].message.text, /user: produce the compact summary/);
+  assert.equal(runtime.sent[0].message.reasoningSummary, "none");
   assert.equal(runtime.createdConfigs[0].ephemeral, true);
   assert.equal(adapter.threadFor(agent.id), null);
   assert.equal(agent.appended.length, 0);
@@ -1288,6 +1311,9 @@ class FakeRuntime extends EventEmitter {
       this.emit("activity", notification("item/started", threadId, turnId, {
         item: { type: "reasoning", id: "reason-1", summary: [], content: [] },
       }));
+      this.emit("activity", notification("item/reasoning/summaryPartAdded", threadId, turnId, {
+        itemId: "reason-1", summaryIndex: 0,
+      }));
       this.emit("activity", notification("item/reasoning/summaryTextDelta", threadId, turnId, {
         itemId: "reason-1", summaryIndex: 0, delta: "Checked the workspace.",
       }));
@@ -1316,6 +1342,32 @@ class FakeRuntime extends EventEmitter {
   async releaseSession(threadId) {
     this.released.push(threadId);
     this.sessions.delete(threadId);
+  }
+}
+
+class EmptyReasoningRuntime extends FakeRuntime {
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-empty-reasoning";
+    queueMicrotask(() => {
+      this.emit("activity", notification("item/started", threadId, turnId, {
+        item: { type: "reasoning", id: "reason-empty", summary: [], content: [] },
+      }));
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "reasoning", id: "reason-empty", summary: [], content: [] },
+      }));
+      this.emit("activity", notification("item/agentMessage/delta", threadId, turnId, {
+        itemId: "answer-empty-reasoning", delta: "done",
+      }));
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "agentMessage", id: "answer-empty-reasoning", text: "done", phase: "final_answer" },
+      }));
+      this.emit("activity", { method: "turn/completed", params: {
+        threadId,
+        turn: { id: turnId, status: "completed", error: null, items: [] },
+      } });
+    });
+    return { id: turnId, status: "inProgress", items: [] };
   }
 }
 
