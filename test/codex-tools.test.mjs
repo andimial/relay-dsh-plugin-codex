@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { codexDynamicTools, handleCodexServerRequest } from "../codex-tools.js";
+import { codexDshToolSurface, handleCodexServerRequest } from "../codex-tools.js";
 
 test("reserved DSH MCP tool names are safely exposed and routed to their original names", async () => {
   const originalName = "mcp__context7__query-docs";
-  const dynamicTools = codexDynamicTools([{
+  const { dynamicTools } = codexDshToolSurface([{
     name: originalName,
     description: "Query Context7 documentation.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
@@ -69,19 +69,19 @@ test("reserved DSH MCP tool names are safely exposed and routed to their origina
 test("DSH tool aliases are deterministic, valid, and isolated from raw tool names", () => {
   const unsafeName = "mcp__server__tool.with spaces";
   const longName = `tool_${"x".repeat(128)}`;
-  const firstUnsafeAlias = dshToolNames(codexDynamicTools([tool(unsafeName)]))[0];
-  const secondUnsafeAlias = dshToolNames(codexDynamicTools([tool(unsafeName)]))[0];
-  const longAlias = dshToolNames(codexDynamicTools([tool(longName)]))[0];
+  const firstUnsafeAlias = dshToolNames(codexDshToolSurface([tool(unsafeName)]).dynamicTools)[0];
+  const secondUnsafeAlias = dshToolNames(codexDshToolSurface([tool(unsafeName)]).dynamicTools)[0];
+  const longAlias = dshToolNames(codexDshToolSurface([tool(longName)]).dynamicTools)[0];
 
   assert.equal(firstUnsafeAlias, secondUnsafeAlias);
   assert.match(firstUnsafeAlias, /^[a-zA-Z0-9_-]{1,128}$/);
   assert.match(longAlias, /^[a-zA-Z0-9_-]{1,128}$/);
 
-  const names = dshToolNames(codexDynamicTools([
+  const names = dshToolNames(codexDshToolSurface([
     tool(unsafeName),
     tool(firstUnsafeAlias),
     tool("ordinary_tool"),
-  ]));
+  ]).dynamicTools);
   assert.equal(new Set(names).size, names.length);
   assert.equal(names[2], "ordinary_tool");
   assert.notEqual(names[1], firstUnsafeAlias);
@@ -89,7 +89,7 @@ test("DSH tool aliases are deterministic, valid, and isolated from raw tool name
 
 test("duplicate DSH tool names fail before reaching Codex", () => {
   assert.throws(
-    () => codexDynamicTools([tool("same_tool"), tool("same_tool")]),
+    () => codexDshToolSurface([tool("same_tool"), tool("same_tool")]),
     /Duplicate DSH tool name: same_tool/,
   );
 });

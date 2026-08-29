@@ -118,6 +118,77 @@ test("an explicitly invoked DSH skill reaches Codex after the original user mess
   );
 });
 
+test("the DSH skill catalog reaches Codex with the user request", async () => {
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  for await (const _chunk of adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [
+      {
+        role: "user",
+        source: { kind: "user" },
+        content: [{ type: "text", text: "diagnose this regression" }],
+      },
+      {
+        role: "user",
+        source: {
+          kind: "skill-catalog",
+          form: "catalog",
+          entries: [{ name: "diagnosing-bugs", description: "Diagnose hard bugs." }],
+        },
+        content: [{
+          type: "text",
+          text: "<available_skills>\ndiagnosing-bugs: Diagnose hard bugs.\n</available_skills>",
+        }],
+      },
+    ],
+  })) {}
+
+  assert.equal(
+    runtime.sent[0].message.text,
+    "diagnose this regression\n\n<available_skills>\ndiagnosing-bugs: Diagnose hard bugs.\n</available_skills>",
+  );
+});
+
+test("a replacement DSH skill catalog reaches Codex from earlier history", async () => {
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [
+      userMessage("first request"),
+      skillCatalogMessage("diagnosing-bugs", "Diagnose hard bugs."),
+    ],
+  }));
+
+  await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [
+      userMessage("first request"),
+      skillCatalogMessage("research", "Research primary sources.", true),
+      { role: "assistant", content: [{ type: "text", text: "first response" }] },
+      userMessage("second request"),
+    ],
+  }));
+
+  assert.equal(
+    runtime.sent[1].message.text,
+    "second request\n\n<available_skills>\nresearch: Research primary sources.\n</available_skills>",
+  );
+});
+
 test("user image messages are forwarded as Codex local image inputs", async () => {
   const runtime = new FakeRuntime();
   const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
@@ -438,6 +509,7 @@ test("an imported binding can move to a rebuilt DSH Session", async (context) =>
   first.bindImportedThread("dsh-old", "codex-thread-rebuild", { cwd: "/workspace/relay" });
   first.markImportState("dsh-old", "committed");
   first.recordOwnedTurn("dsh-old", "owned-turn");
+  first.forwardedSkillCatalogs.set("dsh-old", "<available_skills>catalog</available_skills>");
 
   const moved = first.replaceImportedSession("dsh-old", "dsh-new");
 
@@ -447,6 +519,11 @@ test("an imported binding can move to a rebuilt DSH Session", async (context) =>
   assert.equal(first.bindingForSession("dsh-old"), null);
   assert.equal(first.bindingForThread("codex-thread-rebuild").sessionId, "dsh-new");
   assert.deepEqual([...first.ownedTurnIdsForSession("dsh-new")], ["owned-turn"]);
+  assert.equal(first.forwardedSkillCatalogs.has("dsh-old"), false);
+  assert.equal(
+    first.forwardedSkillCatalogs.get("dsh-new"),
+    "<available_skills>catalog</available_skills>",
+  );
 
   const persisted = JSON.parse(await readFile(path, "utf8"));
   assert.equal(persisted.sessions["dsh-old"], undefined);
@@ -1124,6 +1201,30 @@ function fakeAgent({ id = "dsh-1", tools = null } = {}) {
       events: [],
       append(type, data) { appended.push({ type, data }); },
     },
+  };
+}
+
+function userMessage(text) {
+  return {
+    role: "user",
+    source: { kind: "user" },
+    content: [{ type: "text", text }],
+  };
+}
+
+function skillCatalogMessage(name, description, update = false) {
+  return {
+    role: "user",
+    source: {
+      kind: "skill-catalog",
+      form: "catalog",
+      entries: [{ name, description }],
+      ...(update ? { update: true } : {}),
+    },
+    content: [{
+      type: "text",
+      text: `<available_skills>\n${name}: ${description}\n</available_skills>`,
+    }],
   };
 }
 

@@ -39,6 +39,7 @@ export class CodexDshAdapter extends LlmAdapter {
     this.pendingThreads = new Map();
     this.agents = new Map();
     this.dshToolNamesByAlias = new Map();
+    this.forwardedSkillCatalogs = new Map();
     this.appliedDynamicToolSignatures = new Map();
     this.rebindStates = new Map();
     this.bindingEpochs = new Map();
@@ -111,6 +112,7 @@ export class CodexDshAdapter extends LlmAdapter {
     const key = String(sessionId);
     this.agents.delete(key);
     this.dshToolNamesByAlias.delete(key);
+    this.forwardedSkillCatalogs.delete(key);
     this.appliedDynamicToolSignatures.delete(key);
     this.bumpBindingEpoch(key);
   }
@@ -310,6 +312,8 @@ export class CodexDshAdapter extends LlmAdapter {
 
     const config = structuredClone(this.configuration(oldKey));
     const ownedTurnIds = this.dshOwnedTurnIds.get(oldKey);
+    const hasForwardedSkillCatalog = this.forwardedSkillCatalogs.has(oldKey);
+    const forwardedSkillCatalog = this.forwardedSkillCatalogs.get(oldKey);
     const replacementRecord = {
       threadId,
       config,
@@ -324,6 +328,7 @@ export class CodexDshAdapter extends LlmAdapter {
     this.bindingModes.delete(oldKey);
     this.importStates.delete(oldKey);
     this.dshOwnedTurnIds.delete(oldKey);
+    this.forwardedSkillCatalogs.delete(oldKey);
     this.appliedDynamicToolSignatures.delete(oldKey);
 
     this.links.set(newKey, threadId);
@@ -334,6 +339,9 @@ export class CodexDshAdapter extends LlmAdapter {
     this.bindingModes.set(newKey, "imported");
     this.importStates.set(newKey, "committed");
     if (ownedTurnIds) this.dshOwnedTurnIds.set(newKey, new Set(ownedTurnIds));
+    if (hasForwardedSkillCatalog) {
+      this.forwardedSkillCatalogs.set(newKey, forwardedSkillCatalog);
+    }
     return this.bindingForSession(newKey);
   }
 
@@ -454,8 +462,12 @@ export class CodexDshAdapter extends LlmAdapter {
     }
     const sessionId = String(options.sessionId ?? "");
     if (!sessionId) throw new Error("Relay Codex adapter requires a DSH session id");
-    const input = latestUserInput(options.messages);
-    if (!input) throw new Error("Relay Codex adapter received no user text or image input");
+    const projectedInput = latestUserInput(
+      options.messages,
+      this.forwardedSkillCatalogs.get(sessionId) ?? null,
+    );
+    if (!projectedInput) throw new Error("Relay Codex adapter received no user text or image input");
+    const input = { text: projectedInput.text, localImages: projectedInput.localImages };
     const agent = this.agents.get(sessionId);
     if (!agent) throw new Error(`Relay Codex adapter has no attached agent for ${sessionId}`);
 
@@ -484,6 +496,9 @@ export class CodexDshAdapter extends LlmAdapter {
     let turnId = null;
     try {
       const started = await this.runtime.sendMessage(threadId, { ...input, ...config });
+      if (projectedInput.skillCatalog !== null) {
+        this.forwardedSkillCatalogs.set(sessionId, projectedInput.skillCatalog);
+      }
       turnId = started.id;
       this.recordOwnedTurn(sessionId, turnId);
       const state = createStreamState();
@@ -865,7 +880,7 @@ function reasoningEffortName(value) {
   return String(value) === "xhigh" ? "Extra high" : humanize(value);
 }
 
-function latestUserInput(messages) {
+function latestUserInput(messages, forwardedSkillCatalog) {
   let input = null;
   let inputIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -888,19 +903,44 @@ function latestUserInput(messages) {
   }
   if (input === null) return null;
 
-  const skillInstructions = messages
-    .slice(inputIndex + 1)
-    .filter(message => message?.role === "user" && isSkillInvocation(message.source))
-    .map(message => (message.content ?? [])
-      .filter(block => block.type === "text")
-      .map(block => block.text)
-      .join("\n")
-      .trim())
-    .filter(Boolean);
+  const skillContext = [];
+  let skillCatalog = null;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message?.role !== "user") continue;
+    const text = messageText(message);
+    if (isSkillCatalog(message.source)) {
+      skillCatalog = text;
+      continue;
+    }
+    if (index > inputIndex && isSkillInvocation(message.source) && text) {
+      skillContext.push({ index, text });
+    }
+  }
+  if (skillCatalog && skillCatalog !== forwardedSkillCatalog) {
+    const catalogIndex = messages.findLastIndex(message => (
+      message?.role === "user" && isSkillCatalog(message.source)
+    ));
+    skillContext.push({ index: catalogIndex, text: skillCatalog });
+  }
+  skillContext.sort((left, right) => left.index - right.index);
   return {
-    text: [input.text, ...skillInstructions].filter(Boolean).join("\n\n"),
+    text: [input.text, ...skillContext.map(context => context.text)].filter(Boolean).join("\n\n"),
     localImages: input.localImages,
+    skillCatalog,
   };
+}
+
+function messageText(message) {
+  return (message.content ?? [])
+    .filter(block => block.type === "text")
+    .map(block => block.text)
+    .join("\n")
+    .trim();
+}
+
+function isSkillCatalog(source) {
+  return source?.kind === "skill-catalog" && source.form === "catalog";
 }
 
 function isSkillInvocation(source) {

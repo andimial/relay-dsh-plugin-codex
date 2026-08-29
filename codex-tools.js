@@ -23,10 +23,6 @@ export const CODEX_APP_DYNAMIC_TOOLS = [
   },
 ];
 
-export function codexDynamicTools(dshTools = [], builtins = CODEX_APP_DYNAMIC_TOOLS) {
-  return codexDshToolSurface(dshTools, builtins).dynamicTools;
-}
-
 export function codexDshToolSurface(dshTools = [], builtins = CODEX_APP_DYNAMIC_TOOLS) {
   const namesByAlias = new Map();
   const tools = dshTools.map(tool => ({
