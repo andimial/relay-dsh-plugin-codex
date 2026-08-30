@@ -23,7 +23,7 @@ type AdvancedDebugSectionProps = PropsRuntime<'settings.section'>
 export function AdvancedDebugSection({
   useAdvancedDebug, setAdvancedDebug, t,
 }: AdvancedDebugSectionProps): ReactNode {
-  const enabled = useAdvancedDebug(value => value)
+  const enabled = useAdvancedDebug((value: boolean) => value)
   const codexStatus = useCodexStatus()
   return (
     <section className={css.section}>

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
-  CallId,
+  ToolCallId,
   freezeMessage,
   MessageId,
 } from "@deepseek-ai/dsh-llm";
@@ -534,7 +534,7 @@ function appendProjectedTurn(append, sourceTurn, turn) {
         }),
       }, "append");
     } else {
-      const callId = CallId(entry.callId);
+      const callId = ToolCallId(entry.callId);
       append("assistant/message", {
         turn,
         step,

@@ -1,5 +1,5 @@
 export interface SessionSelectionObservable {
-  getSnapshot(): { sessionId?: string } | undefined
+  getSnapshot(): { current?: string; sessionId?: string } | undefined
   subscribe(listener: () => void): () => void
 }
 
@@ -15,7 +15,7 @@ export interface CodexSyncResult {
 }
 
 export function observeSessionOpen(
-  currentProvideInfo: SessionSelectionObservable,
+  currentSessionSource: SessionSelectionObservable,
   syncSession: (
     sessionId: string,
     isLatestSelection: () => boolean,

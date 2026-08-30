@@ -3,7 +3,7 @@ import { CODEX_SYNC_PATH } from "../../codex-sync-contract.mjs";
 const DSH_CURRENT_SESSION_STORAGE_KEY = "dsh.sessions.current";
 
 export function observeSessionOpen(
-  currentProvideInfo,
+  currentSessionSource,
   syncSession,
   onError = console.warn,
   readFallbackSessionId = readPersistedDshCurrentSessionId,
@@ -29,7 +29,8 @@ export function observeSessionOpen(
     }
   };
   const reconcile = () => {
-    const sessionId = currentProvideInfo.getSnapshot()?.sessionId ?? readFallbackSessionId() ?? null;
+    const snapshot = currentSessionSource.getSnapshot();
+    const sessionId = snapshot?.current ?? snapshot?.sessionId ?? readFallbackSessionId() ?? null;
     // Rebuilding archives the old Session before the HTTP response can name
     // its replacement. Preserve the in-flight selection across that masked gap.
     if (sessionId === null && latestOperation !== null) return;
@@ -44,7 +45,7 @@ export function observeSessionOpen(
       if (latestOperation === operation) latestOperation = null;
     });
   };
-  const unsubscribe = currentProvideInfo.subscribe(reconcile);
+  const unsubscribe = currentSessionSource.subscribe(reconcile);
   reconcile();
   return unsubscribe;
 }

@@ -15,9 +15,10 @@ test("Codex depends on and loads the neutral session import hub first", async ()
   assert.match(patch, /id: relay-session-import-for-codex\s+name: 'relay-dsh-plugin-session-import'/);
   assert.ok(patch.indexOf("relay-session-import-for-codex") < patch.indexOf("relay-codex-host"));
 
-  const linker = await readFile(new URL("../scripts/link-dsh-development-peers.sh", import.meta.url), "utf8");
-  assert.match(linker, /installed_session_import=.*node_modules\/relay-dsh-plugin-session-import/);
-  assert.match(linker, /elif \[\[ ! -f "\$installed_session_import\/package\.json" \]\]/);
+  assert.equal(manifest.scripts['prepare:dsh'], 'node scripts/link-dsh-development-peers.mjs');
+  const linker = await readFile(new URL("../scripts/link-dsh-development-peers.mjs", import.meta.url), "utf8");
+  assert.match(linker, /node_modules.*relay-dsh-plugin-session-import/s);
+  assert.match(linker, /process\.platform === 'win32' \? 'junction' : 'dir'/);
 });
 
 test("Codex contributes a provider instead of a standalone footer trigger", async () => {

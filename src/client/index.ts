@@ -1,8 +1,13 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {} from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type { ChatNodeOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { SidebarFooterActionOwnerProps } from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { AdvancedDebugPreference } from '../../advanced-debug-preference.mjs'
 import { installModelSelection, type ModelSelectionContext } from '../../model-selection.mjs'
 import {
@@ -56,13 +61,10 @@ function applyConnectionStatus(ctx: ClientContext): void {
 
 function applySessionOpenSync(ctx: ClientContext): void {
   ctx.effect(() => observeSessionOpen(
-    ctx.sessions.currentProvideInfo,
+    ctx.sessions.list,
     (sessionId, isLatestSelection) => syncOpenedCodexSessionAndRefresh(
       sessionId,
-      () => Promise.all([
-        (ctx.sessions as typeof ctx.sessions & { refresh(): Promise<void> }).refresh(),
-        (ctx.workspaces as typeof ctx.workspaces & { refresh(): Promise<void> }).refresh(),
-      ]),
+      () => ctx.sessions.refresh(),
       fetch,
       rebuiltSessionId => ctx.sessions.open(rebuiltSessionId as Parameters<typeof ctx.sessions.open>[0]),
       undefined,
@@ -80,10 +82,7 @@ function applyWorkspaceImport(ctx: ClientContext): void {
     },
     scanWorkspace: cwd => scanCodexWorkspace(cwd),
     importWorkspace: (cwd, threadIds, onProgress) => importCodexWorkspace(cwd, { threadIds, onProgress }),
-    refreshWorkspaceState: () => refreshImportedWorkspace(
-      ctx.sessions as typeof ctx.sessions & { refresh(): Promise<void> },
-      ctx.workspaces as typeof ctx.workspaces & { refresh(): Promise<void> },
-    ),
+    refreshWorkspaceState: () => refreshImportedWorkspace(ctx.sessions),
   })
   ctx.slots.inject('relay.session-import.provider', () => ctx.slots.register({
     name: 'relay.session-import.provider',

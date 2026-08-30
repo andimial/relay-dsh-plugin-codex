@@ -48,6 +48,20 @@ test("Session selection falls back to DSH's persisted current Session when curre
   dispose();
 });
 
+test("Session list current selection triggers open sync on current DSH", async () => {
+  const selection = observableList();
+  const calls = [];
+  const dispose = observeSessionOpen(selection, sessionId => {
+    calls.push(sessionId);
+  }, console.warn, () => null);
+
+  selection.set("current-session");
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(calls, ["current-session"]);
+  dispose();
+});
+
 test("a transient open-sync failure retries without requiring the user to leave the Session", async () => {
   const selection = observable();
   const calls = [];
@@ -236,6 +250,16 @@ function observable() {
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     notify() { for (const listener of listeners) listener(); },
     set(next) { sessionId = next; this.notify(); },
+  };
+}
+
+function observableList() {
+  let current;
+  const listeners = new Set();
+  return {
+    getSnapshot: () => ({ current }),
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    set(next) { current = next; for (const listener of listeners) listener(); },
   };
 }
 

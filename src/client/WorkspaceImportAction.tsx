@@ -99,8 +99,8 @@ export function WorkspaceImportProvider({
   refreshWorkspaceState,
   t,
 }: Props): ReactNode {
-  const workspaces = useWorkspaceImportWorkspaces(value => value)
-  const sessions = useWorkspaceImportSessions(value => value)
+  const workspaces = useWorkspaceImportWorkspaces((value: WorkspaceState) => value)
+  const sessions = useWorkspaceImportSessions((value: SessionState) => value)
   const availableTarget = resolveImportWorkspace(workspaces, sessions) as WorkspaceView | null
   const [open, setOpen] = useState(false)
   const [target, setTarget] = useState<WorkspaceView | null>(null)
@@ -234,11 +234,13 @@ export function WorkspaceImportProvider({
                 value={target.workspaceId}
                 aria-describedby="codex-import-workspace-help"
                 onChange={event => {
-                  const selected = workspaces.items.find(workspace => workspace.workspaceId === event.currentTarget.value)
+                  const selected = workspaces.items.find(
+                    (workspace: WorkspaceView) => workspace.workspaceId === event.currentTarget.value,
+                  )
                   if (selected !== undefined) setTarget(selected)
                 }}
               >
-                {workspaces.items.map(workspace => (
+                {workspaces.items.map((workspace: WorkspaceView) => (
                   <option key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.title}</option>
                 ))}
               </select>

@@ -12,14 +12,14 @@
   "engines": { "node": ">=22.13" },
   "publishConfig": { "access": "public" },
   "scripts": {
-    "prepare:dsh": "bash scripts/link-dsh-development-peers.sh",
+    "prepare:dsh": "node scripts/link-dsh-development-peers.mjs",
     "prebuild": "npm run prepare:dsh && node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
     "build": "tsdown --config tsdown.config.ts",
     "postbuild": "node normalize-build.mjs",
     "pretypecheck": "npm run prepare:dsh",
     "typecheck": "tsc -p tsconfig.json",
     "test:unit": "node --test test/*.test.mjs",
-    "test:component": "vitest run test/*.spec.tsx",
+    "test:component": "vitest run --passWithNoTests test/*.spec.tsx",
     "test": "npm run prepare:dsh && npm run test:unit && npm run test:component",
     "verify": "npm run typecheck && npm test && npm run build"
   },
@@ -31,8 +31,9 @@
   },
   "files": ["README.zh.md", "docs/images", "docs/reliability-spec.md", "docs/reliability-acceptance.md", "docs/spec/dsh-interaction-bridge.md", "cordis.patch.yml", "presets", "lib/client.js", "lib/client.js.map", "lib/host-plugin.js", "lib/host-plugin.js.map", "lib/typert.host.js", "lib/typert.host.js.map"],
   "dsh": {
+    "engines": { "dsh": ">=0.1.2-alpha.1 <0.2.0" },
     "client": {
-      "inject": ["@deepseek-ai/dsh-client-connection", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-sidebar", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-theme", "relay-dsh-plugin-session-import"],
+      "inject": ["@deepseek-ai/dsh-client-connection", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-ui-renderer", "@deepseek-ai/dsh-client-ui-session", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-sidebar", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-theme", "@deepseek-ai/dsh-api-session-controller", "@deepseek-ai/dsh-api-workspace-controller", "relay-dsh-plugin-session-import"],
       "platform": "web"
     },
     "bundle": { "patch": "./cordis.patch.yml" }

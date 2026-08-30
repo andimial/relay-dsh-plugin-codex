@@ -28,7 +28,7 @@ export function installModelSelection(
       && list.current === id
       && latest?.blank === true
       && desired.get(id)?.generation === target.generation
-      && latest.agentPreset === target.selectedPreset;
+      && latest.projectionValues?.agentPreset === target.selectedPreset;
   };
 
   const retry = (id, target) => {
@@ -92,7 +92,7 @@ export function installModelSelection(
     const list = ctx.sessions.list.getSnapshot();
     const id = list.current;
     if (id === undefined || list.byId[id]?.blank !== true) return;
-    const selectedPreset = list.byId[id]?.agentPreset;
+    const selectedPreset = list.byId[id]?.projectionValues?.agentPreset;
     if (selectedPreset !== preset && selectedPreset === otherProvider) return;
 
     const desiredKey = `${selectedPreset ?? "standard"}`;

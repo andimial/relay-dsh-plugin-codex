@@ -5,6 +5,8 @@ import test from "node:test";
 
 import { JSDOM } from "jsdom";
 import * as React from "react";
+import * as ReactDOM from "react-dom";
+import * as StorePackage from "@deepseek-ai/dsh-client-store";
 import * as SlotPackage from "@deepseek-ai/dsh-client-ui-slots";
 
 const clientBundle = await readFile(new URL("../lib/client.js", import.meta.url), "utf8");
@@ -71,6 +73,7 @@ async function renderConversationHost({ legacyGuardControl = false } = {}) {
       children: {
         "conversation.session.header": { kind: "single", scope: "session" },
         "conversation.view": { kind: "list", scope: "session" },
+        "relay.session-import.provider": { kind: "list", scope: "root" },
         "settings.section": { kind: "list", scope: "root" },
         "sidebar.footer.action": { kind: "list", scope: "root" },
       },
@@ -103,14 +106,10 @@ async function renderConversationHost({ legacyGuardControl = false } = {}) {
     for (const [id, label] of viewLabels) {
       disposers.push(core.register({ name: "conversation.view", id, label }, () => null));
     }
-    const views = {
-      list: () => core.entriesOfSlot("conversation.view").map(entry => ({
-        id: entry.options.id,
-        label: entry.options.label,
-      })),
-      subscribe: listener => core.subscribe("conversation.view", listener),
-      version: () => core.getVersion("conversation.view"),
-    };
+    const viewTabs = core.entriesOfSlot("conversation.view").map(entry => ({
+      id: entry.options.id,
+      label: entry.options.label,
+    }));
     disposers.push(core.register({
       name: "conversation.session.header",
       children: {
@@ -118,7 +117,10 @@ async function renderConversationHost({ legacyGuardControl = false } = {}) {
         "conversation.session.header.actions": { kind: "list", scope: "session" },
         "conversation.session.header.utilities": { kind: "list", scope: "session" },
       },
-      inject: () => ({ views, open() {} }),
+      inject: () => ({
+        useConversationViews: selector => selector(viewTabs),
+        open() {},
+      }),
     }, conversationModule.__ConversationSessionHeader));
 
     const emptyList = observable({ current: undefined, byId: {} });
@@ -138,13 +140,11 @@ async function renderConversationHost({ legacyGuardControl = false } = {}) {
       },
       sessions: {
         list: emptyList,
-        currentProvideInfo: observable(null),
         async refresh() {},
         open() {},
       },
       workspaces: {
         list: observable({ items: [] }),
-        async refresh() {},
       },
       get(name) {
         if (name !== "connection") return undefined;
@@ -209,7 +209,7 @@ function PublishedConversationHeaderHarness({ core }) {
         id: "session-1",
         displayTitle: "Codex session",
         origin: "user",
-        agentPreset: "standard",
+        projectionValues: { agentPreset: "standard" },
       },
     },
   });
@@ -220,7 +220,15 @@ function PublishedConversationHeaderHarness({ core }) {
   );
   return React.createElement(entry.component, {
     sessionId: "session-1",
-    useSession: selector => selector({ blank: false, composerPhase: "active" }),
+    useSession: selector => selector({
+      awaitingFirstTurn: false,
+      blank: false,
+      running: false,
+    }),
+    useConversation: selector => selector({
+      views: { get: () => undefined },
+      activeTargets: new Set(),
+    }),
     useSessions,
     useStore: selector => selector({ view }),
     actions: { setView },
@@ -252,9 +260,10 @@ function exposePublishedConversationHeader(source) {
 
 function browserDependency(name, ReactJsxRuntime) {
   if (name === "react") return React;
+  if (name === "react-dom") return ReactDOM;
   if (name === "react/jsx-runtime") return ReactJsxRuntime;
+  if (name === "@deepseek-ai/dsh-client-store") return StorePackage;
   if (name === "@deepseek-ai/dsh-client-ui-slots") return SlotPackage;
-  if (name === "@deepseek-ai/dsh-client-runtime/client") return {};
   if (name === "@deepseek-ai/dsh-client-ui-primitives") return {};
   if (name === "@deepseek-ai/cordis") return { Service: class {} };
   throw new Error(`Unexpected browser module: ${name}`);

@@ -102,7 +102,10 @@ function modelHarness({
   codexReadyAfter = 0,
   selectFails = 0,
 }) {
-  let state = { current: "session-1", byId: { "session-1": { id: "session-1", blank, agentPreset: preset } } };
+  let state = {
+    current: "session-1",
+    byId: { "session-1": { id: "session-1", blank, projectionValues: { agentPreset: preset } } },
+  };
   let currentProvider = provider;
   let queries = 0;
   const listeners = new Set();
@@ -145,7 +148,16 @@ function modelHarness({
     currentProvider: () => currentProvider,
     modelQueries: () => queries,
     setPreset(agentPreset) {
-      state = { ...state, byId: { ...state.byId, "session-1": { ...state.byId["session-1"], agentPreset } } };
+      state = {
+        ...state,
+        byId: {
+          ...state.byId,
+          "session-1": {
+            ...state.byId["session-1"],
+            projectionValues: { agentPreset },
+          },
+        },
+      };
       for (const listener of listeners) listener();
     },
     settle: () => new Promise(resolve => setTimeout(resolve, 10)),
