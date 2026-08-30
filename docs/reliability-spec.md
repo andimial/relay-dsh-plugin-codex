@@ -79,11 +79,11 @@ Session is never rewritten by this synchronization.
 
 ## Workspace Thread discovery and selective import
 
-The sidebar footer exposes a Codex-specific icon action: 34 by 34 pixels while
-expanded and 28 by 28 pixels in the 56-pixel collapsed rail, so Codex and Claude
-fit side by side. Its localized accessible name is also its Tooltip; no inline
-label may consume the shared horizontal footer row. Opening
-the action presents a visible Workspace selector. The current Session owner,
+The provider-neutral `relay-dsh-plugin-session-import` hub owns the sidebar
+footer's single **Import sessions...** entry. Codex contributes one explicit
+**Import from Codex** menu row through `relay.session-import.provider`; it owns
+no standalone footer trigger. Selecting that row presents a visible Workspace
+selector. The current Session owner,
 then the recent Workspace, is only an initial choice. The user may change it,
 and the plugin must not scan until the user invokes **Scan sessions**.
 

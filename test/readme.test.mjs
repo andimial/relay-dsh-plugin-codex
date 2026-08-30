@@ -82,7 +82,8 @@ test('reliability spec, READMEs, and acceptance matrix describe the implemented 
 
 test('README preserves standalone scope and every supported installation source', () => {
   assert.match(english, /independently installable/i)
-  assert.match(english, /no runtime dependency on the\s+Relay application, Relay Events, or another Relay plugin/i)
+  assert.match(english, /only Relay package dependency is\s+the provider-neutral session import hub/i)
+  assert.match(english, /no runtime dependency on the Relay application, Relay\s+Events, or another feature plugin/i)
   const versionTag = new RegExp(
     `github:yangbobo2021/relay-dsh-plugin-codex#v${manifest.version.replaceAll('.', '\\.')}`,
   )
