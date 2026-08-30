@@ -5,7 +5,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/relay-dsh-plugin-codex?label=downloads)](https://www.npmjs.com/package/relay-dsh-plugin-codex)
 [![GitHub stars](https://img.shields.io/github/stars/yangbobo2021/relay-dsh-plugin-codex?style=flat)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/stargazers)
 [![MIT license](https://img.shields.io/github/license/yangbobo2021/relay-dsh-plugin-codex)](LICENSE)
-[![DSH compatibility](https://img.shields.io/badge/DSH-0.1.1--rc.2-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
+[![DSH compatibility](https://img.shields.io/badge/DSH-0.1.2--alpha.1-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
 [![npm provenance](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.4)
 
 English | [中文](README.zh.md)
@@ -35,8 +35,8 @@ The install requires Node.js 22.13 or newer and `pnpm` on `PATH`. Stop DSH Web,
 install the stable plugin, and restart DSH:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@latest
-npx @deepseek-ai/dsh@0.1.1-rc.2 web
+npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add relay-dsh-plugin-codex@latest
+npx @deepseek-ai/dsh@0.1.2-alpha.1 web
 ```
 
 Open **New Session**, select a workspace, choose **Codex** from the mode menu,
@@ -44,9 +44,10 @@ and send a message.
 
 ![Codex and Claude Code in the DSH New Session mode menu](docs/images/dsh-new-session-backends.jpg)
 
-The screenshot was captured from official DSH `0.1.1-rc.2` with the Codex and
-Claude plugins installed. If you install only this plugin, only **Codex** is
-added.
+The screenshot was captured from an earlier official DSH preview with the Codex
+and Claude plugins installed. The installation commands target `0.1.2-alpha.1`;
+the mode-menu flow remains the same. If you install only this plugin, only
+**Codex** is added.
 
 [Watch Plugin Manager find and install this package in 40 seconds](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/media/dsh-plugin-manager-codex-install-demo.en.mp4?raw=1)
 · [review all Relay DSH plugins](https://github.com/yangbobo2021/Relay/blob/codex/relay-foundation/docs/dsh-plugins.md)
@@ -73,14 +74,17 @@ Events, file browsing, or a terminal panel. Those are separate optional plugins.
 
 The steps below were validated with:
 
-- DeepSeek Harness `0.1.1-rc.2`, commit
-  [`b150a551`](https://github.com/deepseek-ai/deepseek-harness/commit/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)
+- DeepSeek Harness `0.1.2-alpha.1`, commit
+  [`cd5ef814`](https://github.com/deepseek-ai/deepseek-harness/commit/cd5ef8148158c3a752a658978873241fdf8e2bbc)
 - Node.js 22.13 or newer
 - `pnpm` available on `PATH`
 
 DSH is currently a developer preview and may introduce compatibility-breaking
 changes. This repository tracks official releases and records its tested version
 here.
+
+DSH versions before `0.1.2-alpha.1` are unsupported because they expose retired
+client and Host APIs.
 
 ### 1. Prepare Codex authentication
 
@@ -117,7 +121,7 @@ The published npm package name is
 Use `@latest` to install the current stable release:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@latest
+npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add relay-dsh-plugin-codex@latest
 ```
 
 At the time of writing, `latest` resolves to stable version `0.1.4`. The linked
@@ -131,7 +135,7 @@ contains the bundled cross-platform App Server runtime, so DSH does not depend
 on a global `codex` executable:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@next
+npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
 At the time of writing, `next` resolves to `0.1.4`.
@@ -141,25 +145,25 @@ At the time of writing, `next` resolves to `0.1.4`.
 Install the current `main` branch when testing an unreleased change:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#main
+npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#main
 ```
 
 `main` can change at any time. For a reproducible GitHub install, pin a Tag or
 full Commit SHA instead. For example:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.4
+npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.4
 ```
 
 The official DSH CLI initializes the `web` Profile if it does not exist, asks
 `pnpm` to install the selected package, and adds the plugin's bundle layer. No
 Relay checkout is required. If you already installed the `dsh` command, replace
-the `npx @deepseek-ai/dsh@0.1.1-rc.2` prefix with `dsh` in any command above.
+the `npx @deepseek-ai/dsh@0.1.2-alpha.1` prefix with `dsh` in any command above.
 
 ### 3. Start or restart DSH Web
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 web
+npx @deepseek-ai/dsh@0.1.2-alpha.1 web
 ```
 
 If you use an installed command, run `dsh web` instead. Bundle membership is read
@@ -287,7 +291,7 @@ dsh plugin --profile web update relay-dsh-plugin-codex
 dsh plugin --profile web remove relay-dsh-plugin-codex
 ```
 
-Use the `npx @deepseek-ai/dsh@0.1.1-rc.2` prefix instead of `dsh` when you do not
+Use the `npx @deepseek-ai/dsh@0.1.2-alpha.1` prefix instead of `dsh` when you do not
 have a persistent DSH command.
 
 ## Troubleshooting

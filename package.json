@@ -19,7 +19,7 @@
     "pretypecheck": "npm run prepare:dsh",
     "typecheck": "tsc -p tsconfig.json",
     "test:unit": "node --test test/*.test.mjs",
-    "test:component": "vitest run --passWithNoTests test/*.spec.tsx",
+    "test:component": "vitest run test/WorkspaceImportAction.spec.tsx",
     "test": "npm run prepare:dsh && npm run test:unit && npm run test:component",
     "verify": "npm run typecheck && npm test && npm run build"
   },

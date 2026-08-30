@@ -14,13 +14,16 @@ const [english, chinese, screenshot, preset, manifestText, reliabilitySpec, reli
   readFile(new URL('docs/spec/dsh-interaction-bridge.md', root), 'utf8'),
 ])
 const manifest = JSON.parse(manifestText)
+const minimumDshVersion = /^>=([^ ]+)/.exec(manifest.dsh.engines.dsh)?.[1]
+
+assert.ok(minimumDshVersion, 'dsh.engines.dsh must declare an inclusive minimum version')
 
 test('English and Chinese READMEs form a complete newcomer path', () => {
   for (const readme of [english, chinese]) {
     assert.match(readme, /github:yangbobo2021\/relay-dsh-plugin-codex/)
     assert.match(readme, /relay-dsh-plugin-codex/)
-    assert.match(readme, /0\.1\.1-rc\.2/)
-    assert.match(readme, /b150a551/)
+    assert.match(readme, new RegExp(`@deepseek-ai/dsh@${minimumDshVersion.replaceAll('.', '\\.')}`))
+    assert.doesNotMatch(readme, /@deepseek-ai\/dsh@0\.1\.1-rc\.2/)
     assert.match(readme, /docs\/images\/dsh-new-session-backends\.jpg/)
     assert.match(readme, /Add workspace/)
     assert.match(readme, /New Session/)
