@@ -1,4 +1,7 @@
 import type { ChatConversationViewNode, ConversationNodeDefinition } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionEventMap } from '@deepseek-ai/dsh-session/types'
+
+type SessionEventContractAnchor = SessionEventMap
 
 export type CodexActivityStatus = 'running' | 'completed' | 'error'
 

@@ -6,7 +6,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/yangbobo2021/relay-dsh-plugin-codex?style=flat)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/stargazers)
 [![MIT license](https://img.shields.io/github/license/yangbobo2021/relay-dsh-plugin-codex)](LICENSE)
 [![DSH compatibility](https://img.shields.io/badge/DSH-0.1.1--rc.2-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
-[![npm provenance](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.3)
+[![npm provenance](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.4)
 
 English | [中文](README.zh.md)
 
@@ -120,7 +120,7 @@ Use `@latest` to install the current stable release:
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@latest
 ```
 
-At the time of writing, `latest` resolves to stable version `0.1.3`. The linked
+At the time of writing, `latest` resolves to stable version `0.1.4`. The linked
 npm page is the source of truth for the current version.
 
 #### npm prerelease (recommended during DSH preview)
@@ -134,7 +134,7 @@ on a global `codex` executable:
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-At the time of writing, `next` resolves to `0.1.3`.
+At the time of writing, `next` resolves to `0.1.4`.
 
 #### GitHub development build
 
@@ -148,7 +148,7 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/rel
 full Commit SHA instead. For example:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.3
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.4
 ```
 
 The official DSH CLI initializes the `web` Profile if it does not exist, asks
@@ -261,12 +261,13 @@ This repository was designed and compatibility-tested in
 long-running agent work, external-event delivery, reusable DSH workbench views,
 and multiple conversation backends.
 
-The plugin is independently installable. It has no runtime dependency on the
-Relay application, Relay Events, or another Relay plugin. It does not replace the
-official DSH layout or install Files and Terminal views. This separation lets a
-user install only Codex while the broader Relay project can compose Codex, Claude,
-events, waits, monitors, and workbench extensions when those capabilities are
-needed.
+The plugin is independently installable. Its only Relay package dependency is
+the provider-neutral session import hub, which the package manager installs
+automatically. It has no runtime dependency on the Relay application, Relay
+Events, or another feature plugin. It does not replace the official DSH layout
+or install Files and Terminal views. This separation lets a user install only
+Codex while the broader Relay project can compose Codex, Claude, events, waits,
+monitors, and workbench extensions when those capabilities are needed.
 
 Explore or star Relay to follow that broader work:
 <https://github.com/yangbobo2021/Relay>.
