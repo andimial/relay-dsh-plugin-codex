@@ -31,7 +31,10 @@ test("Codex threads keep their context across turns, switching, and resume", asy
   assert.deepEqual(firstStart.params.runtimeWorkspaceRoots, ["/workspace/relay"]);
   assert.deepEqual(firstStart.params.config, { "features.realtime_conversation": false });
   assert.equal(firstStart.params.personality, "friendly");
-  assert.deepEqual(client.requests.find(request => request.method === "thread/resume").params.dynamicTools, tools);
+  assert.equal(firstStart.params.experimentalRawEvents, true);
+  const firstResume = client.requests.find(request => request.method === "thread/resume");
+  assert.deepEqual(firstResume.params.dynamicTools, tools);
+  assert.equal(firstResume.params.config, undefined);
   const firstTurn = client.requests.find(request => request.method === "turn/start");
   assert.deepEqual(firstTurn.params.input, [{ type: "text", text: "first turn", text_elements: [] }]);
   assert.equal(firstTurn.params.summary, "concise");
@@ -88,6 +91,36 @@ test("Codex forks branch through App Server thread/fork at the requested complet
   await runtime.close();
 });
 
+test("explicit Hook trust bypass reaches every Thread lifecycle request", async () => {
+  const client = new FakeCodexClient({
+    bypassHookTrust: true,
+  });
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+  await runtime.initialize();
+  const tools = [{ type: "function", name: "relay_wait", description: "wait", inputSchema: {} }];
+  const parent = await runtime.createSession({ dynamicTools: tools });
+  await runtime.sendMessage(parent.id, { text: "parent turn" });
+  await tick();
+  await runtime.forkSession(parent.id, { lastTurnId: "turn-1" });
+  await runtime.resumeSession(parent.id, { dynamicTools: tools });
+
+  const start = client.requests.find(request => request.method === "thread/start");
+  const fork = client.requests.find(request => request.method === "thread/fork");
+  const resume = client.requests.find(request => request.method === "thread/resume");
+  assert.deepEqual(start.params.config, {
+    "features.realtime_conversation": false,
+    bypass_hook_trust: true,
+  });
+  assert.deepEqual(fork.params.config, {
+    "features.realtime_conversation": false,
+    bypass_hook_trust: true,
+  });
+  assert.deepEqual(resume.params.config, { bypass_hook_trust: true });
+  assert.deepEqual(start.params.dynamicTools, tools);
+  assert.deepEqual(resume.params.dynamicTools, tools);
+  await runtime.close();
+});
+
 test("Codex image turns use native localImage input and attachment metadata", async () => {
   const client = new FakeCodexClient();
   const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
@@ -113,7 +146,24 @@ test("Codex image turns use native localImage input and attachment metadata", as
   assert.equal(turn.params.sandboxPolicy, null);
   assert.equal(turn.params.permissions, ":workspace");
   assert.equal(turn.params.runtimeWorkspaceRoots[0], "/workspace/relay");
-  assert.match(turn.params.runtimeWorkspaceRoots[1], /\/\.codex\/visualizations\/\d{4}\/\d{2}\/\d{2}\/thread-1$/);
+  assert.match(
+    turn.params.runtimeWorkspaceRoots[1].replaceAll("\\", "/"),
+    /\/\.codex\/visualizations\/\d{4}\/\d{2}\/\d{2}\/thread-1$/,
+  );
+  await runtime.close();
+});
+
+test("business Turns request public reasoning summaries and internal callers can disable them", async () => {
+  const client = new FakeCodexClient();
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+  await runtime.initialize();
+  const session = await runtime.createSession({ model: "codex-test", effort: "high" });
+
+  await runtime.sendMessage(session.id, { text: "business reasoning" });
+  await runtime.sendMessage(session.id, { text: "auxiliary reasoning", reasoningSummary: "none" });
+
+  const turns = client.requests.filter(request => request.method === "turn/start");
+  assert.deepEqual(turns.map(turn => turn.params.summary), ["concise", "none"]);
   await runtime.close();
 });
 
@@ -193,6 +243,57 @@ test("App Server notifications remain incremental and server requests remain int
   assert.equal(runtime.snapshot().pendingRequests.length, 1);
   await runtime.resolveRequest("approval-1", { action: "accept" });
   assert.deepEqual(client.responses.at(-1), { id: "approval-1", result: { decision: "accept" } });
+  await runtime.close();
+});
+
+test("raw response items expose only validated active code-mode shell output", async () => {
+  const client = new FakeCodexClient();
+  const runtime = new CodexSessionRuntime({ client, cwd: "/workspace/relay" });
+  const activity = [];
+  runtime.on("activity", message => activity.push(message));
+  await runtime.initialize();
+  const session = await runtime.createSession();
+  const base = { threadId: session.id, turnId: "turn-raw-shell" };
+
+  client.notify("rawResponseItem/completed", {
+    ...base,
+    item: { type: "message", role: "developer", content: [{ type: "input_text", text: "private" }] },
+  });
+  client.notify("rawResponseItem/completed", {
+    ...base,
+    item: { type: "custom_tool_call", call_id: "other-1", name: "other", input: "text('ignore')" },
+  });
+  client.notify("rawResponseItem/completed", {
+    ...base,
+    item: { type: "custom_tool_call_output", call_id: "other-1", output: "{\"session_id\":7,\"wall_time_seconds\":1,\"output\":\"ignore\"}" },
+  });
+  client.notify("rawResponseItem/completed", {
+    ...base,
+    item: { type: "custom_tool_call", call_id: "exec-1", name: "exec", input: "code mode" },
+  });
+  client.notify("rawResponseItem/completed", {
+    ...base,
+    item: {
+      type: "custom_tool_call_output",
+      call_id: "exec-1",
+      output: [
+        { type: "input_text", text: "Script running" },
+        { type: "encrypted_content", encrypted_content: "private" },
+        { type: "input_text", text: "{\"session_id\":7319,\"wall_time_seconds\":1.1,\"output\":\"FIRST\\n\"}" },
+      ],
+    },
+  });
+
+  assert.deepEqual(activity, [{
+    method: "item/codeModeShell/outputDelta",
+    params: {
+      threadId: session.id,
+      turnId: "turn-raw-shell",
+      processId: "7319",
+      delta: "FIRST\n",
+    },
+  }]);
+  assert.equal(JSON.stringify(activity).includes("private"), false);
   await runtime.close();
 });
 
@@ -370,7 +471,7 @@ test("Workspace inventory paginates with explicit source kinds and enforces cano
       mkdir(child, { recursive: true }),
       mkdir(sibling, { recursive: true }),
     ]);
-    await symlink(workspace, alias);
+    await symlink(workspace, alias, process.platform === "win32" ? "junction" : undefined);
     const runtime = new CodexSessionRuntime({ client, cwd: alias });
     await runtime.initialize();
     client.requests.length = 0;
@@ -451,6 +552,7 @@ test("ephemeral auxiliary threads carry isolated instructions and are released",
   });
   const start = client.requests.find(request => request.method === "thread/start");
   assert.equal(start.params.ephemeral, true);
+  assert.equal(start.params.experimentalRawEvents, false);
   assert.equal(start.params.baseInstructions, "Generate a title.");
   assert.equal(start.params.developerInstructions, "Do not call tools.");
   assert.deepEqual(start.params.dynamicTools, []);
@@ -468,8 +570,9 @@ test("ephemeral auxiliary threads carry isolated instructions and are released",
 });
 
 class FakeCodexClient extends EventEmitter {
-  constructor() {
+  constructor({ bypassHookTrust = false } = {}) {
     super();
+    this.bypassHookTrust = bypassHookTrust;
     this.connected = true;
     this.requests = [];
     this.responses = [];

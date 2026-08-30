@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const root = new URL('../', import.meta.url)
-const [english, chinese, screenshot, preset, manifestText, reliabilitySpec, reliabilityAcceptance] = await Promise.all([
+const [english, chinese, screenshot, preset, manifestText, reliabilitySpec, reliabilityAcceptance, interactionSpec] = await Promise.all([
   readFile(new URL('README.md', root), 'utf8'),
   readFile(new URL('README.zh.md', root), 'utf8'),
   readFile(new URL('docs/images/dsh-new-session-backends.jpg', root)),
@@ -11,6 +11,7 @@ const [english, chinese, screenshot, preset, manifestText, reliabilitySpec, reli
   readFile(new URL('package.json', root), 'utf8'),
   readFile(new URL('docs/reliability-spec.md', root), 'utf8'),
   readFile(new URL('docs/reliability-acceptance.md', root), 'utf8'),
+  readFile(new URL('docs/spec/dsh-interaction-bridge.md', root), 'utf8'),
 ])
 const manifest = JSON.parse(manifestText)
 
@@ -50,6 +51,7 @@ test('README screenshot and bilingual preset ship with the package', () => {
   assert.ok(manifest.files.includes('docs/images'))
   assert.ok(manifest.files.includes('docs/reliability-spec.md'))
   assert.ok(manifest.files.includes('docs/reliability-acceptance.md'))
+  assert.ok(manifest.files.includes('docs/spec/dsh-interaction-bridge.md'))
 })
 
 test('reliability spec, READMEs, and acceptance matrix describe the implemented contract', () => {
@@ -61,11 +63,21 @@ test('reliability spec, READMEs, and acceptance matrix describe the implemented 
   assert.match(reliabilitySpec, /connection-failed/)
   assert.match(reliabilitySpec, /CODEX_STALE_APPROVAL/)
   assert.match(reliabilitySpec, /binding epoch/)
+  assert.match(reliabilitySpec, /Subagent interaction ownership/)
+  assert.match(reliabilitySpec, /completed App Server `mcpToolCall`/)
+  assert.match(reliabilityAcceptance, /I6 MCP image result/)
+  assert.match(reliabilitySpec, /disables Codex `features\.shell_snapshot`/)
+  assert.match(reliabilityAcceptance, /C6 Secret-safe shell environment/)
   assert.match(
     reliabilityAcceptance,
     /disconnect\s*\/\s*pending approval\s*\/\s*reconnect/i,
   )
   assert.match(reliabilityAcceptance, /b150a551/)
+  assert.match(interactionSpec, /required Host injections/)
+  assert.match(interactionSpec, /subAgentActivity\.agentThreadId/)
+  assert.match(interactionSpec, /complete acyclic[\s\S]+parent chain/)
+  assert.match(english, /DSH interaction bridge specification/)
+  assert.match(chinese, /DSH 交互桥接规范/)
 })
 
 test('README preserves standalone scope and every supported installation source', () => {

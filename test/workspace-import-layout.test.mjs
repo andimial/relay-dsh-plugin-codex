@@ -2,29 +2,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const component = await readFile(
-  new URL("../src/client/WorkspaceImportAction.tsx", import.meta.url),
-  "utf8",
-);
-const styles = await readFile(
-  new URL("../src/client/WorkspaceImportAction.module.css", import.meta.url),
-  "utf8",
-);
+test("Codex footer action remains compact in every sidebar width", async () => {
+  const css = await readFile(new URL("../src/client/WorkspaceImportAction.module.css", import.meta.url), "utf8");
+  const trigger = css.match(/\.trigger\s*\{(?<rules>[^}]*)\}/s)?.groups?.rules ?? "";
 
-function cssRule(name) {
-  return styles.match(new RegExp(`\\.${name}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
-}
+  assert.match(trigger, /width:\s*34px;/);
+  assert.match(trigger, /min-width:\s*34px;/);
+  assert.match(trigger, /height:\s*34px;/);
+  assert.match(trigger, /flex:\s*0 0 34px;/);
+  assert.doesNotMatch(trigger, /width:\s*100%;/);
 
-test("workspace import action fits both expanded and collapsed sidebar rails", () => {
-  assert.match(component, /wide \? css\.triggerWide : css\.triggerCollapsed/);
-
-  const wide = cssRule("triggerWide");
-  assert.match(wide, /width:\s*100%/);
-  assert.match(wide, /padding:\s*0 12px/);
-
-  const collapsed = cssRule("triggerCollapsed");
-  assert.match(collapsed, /width:\s*36px/);
-  assert.match(collapsed, /height:\s*36px/);
-  assert.match(collapsed, /justify-content:\s*center/);
-  assert.match(collapsed, /padding:\s*0/);
+  const compact = css.match(/\.trigger\[data-compact='true'\]\s*\{(?<rules>[^}]*)\}/s)?.groups?.rules ?? "";
+  assert.match(compact, /width:\s*28px;/);
+  assert.match(compact, /min-width:\s*28px;/);
+  assert.match(compact, /height:\s*28px;/);
+  assert.match(compact, /flex-basis:\s*28px;/);
 });

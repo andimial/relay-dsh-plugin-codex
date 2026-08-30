@@ -3,7 +3,8 @@ import { basename, resolve } from "node:path";
 
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 
-import { importCodexGeneratedImage, importCodexImage } from "./codex-image.js";
+import { importCodexGeneratedImage, importCodexImage, importCodexMcpImage } from "./codex-image.js";
+import { materializeCodexAttachment } from "./codex-image-input.js";
 import { CODEX_APP_DYNAMIC_TOOLS, codexDshToolSurface } from "./codex-tools.js";
 import { rebindRequiredStatus } from "./connection-status.mjs";
 
@@ -43,6 +44,9 @@ export class CodexDshAdapter extends LlmAdapter {
     this.appliedDynamicToolSignatures = new Map();
     this.rebindStates = new Map();
     this.bindingEpochs = new Map();
+    this.subagentBindings = new Map();
+    this.subagentBindingConflicts = new Set();
+    this.activeRootTurns = new Map();
     for (const [sessionId, record] of linkStore?.entries() ?? []) {
       if (record.threadId) this.links.set(sessionId, record.threadId);
       this.settings.set(sessionId, record.config);
@@ -114,6 +118,7 @@ export class CodexDshAdapter extends LlmAdapter {
     this.dshToolNamesByAlias.delete(key);
     this.forwardedSkillCatalogs.delete(key);
     this.appliedDynamicToolSignatures.delete(key);
+    this.releaseSubagentBindings(key);
     this.bumpBindingEpoch(key);
   }
 
@@ -408,33 +413,125 @@ export class CodexDshAdapter extends LlmAdapter {
     return null;
   }
 
+  interactionBindingForThread(threadId) {
+    const requestThreadId = optionalIdentity(threadId);
+    if (!requestThreadId) return null;
+    const directSessionId = this.dshSessionForThread(requestThreadId);
+    if (directSessionId) {
+      return Object.freeze({
+        sessionId: directSessionId,
+        rootThreadId: requestThreadId,
+        requestThreadId,
+      });
+    }
+
+    if (this.subagentBindingConflicts.has(requestThreadId)) return null;
+    const observed = this.subagentBindings.get(requestThreadId);
+    if (observed) {
+      const visited = new Set();
+      let currentThreadId = requestThreadId;
+      while (currentThreadId !== observed.rootThreadId) {
+        if (visited.has(currentThreadId) || this.subagentBindingConflicts.has(currentThreadId)) {
+          return null;
+        }
+        visited.add(currentThreadId);
+        const current = this.subagentBindings.get(currentThreadId);
+        if (!current
+          || current.sessionId !== observed.sessionId
+          || current.rootThreadId !== observed.rootThreadId
+          || current.epoch !== observed.epoch) {
+          return null;
+        }
+        currentThreadId = current.parentThreadId;
+      }
+      if (this.links.get(observed.sessionId) !== observed.rootThreadId
+        || (this.bindingEpochs.get(observed.sessionId) ?? 0) !== observed.epoch
+        || this.rebindStates.has(observed.sessionId)
+        || !this.activeRootTurns.has(observed.rootThreadId)) {
+        return null;
+      }
+      return Object.freeze({
+        sessionId: observed.sessionId,
+        rootThreadId: observed.rootThreadId,
+        requestThreadId,
+      });
+    }
+
+    return null;
+  }
+
+  observeSubagentActivity(message) {
+    if (message.method !== "item/started" && message.method !== "item/completed") return false;
+    const item = message.params?.item;
+    if (item?.type !== "subAgentActivity") return false;
+    const parentThreadId = optionalIdentity(message.params?.threadId);
+    const childThreadId = optionalIdentity(item.agentThreadId);
+    if (!parentThreadId || !childThreadId || parentThreadId === childThreadId) return false;
+    if (this.subagentBindingConflicts.has(childThreadId)) return false;
+    const parent = this.interactionBindingForThread(parentThreadId);
+    if (!parent) return false;
+    const next = Object.freeze({
+      sessionId: parent.sessionId,
+      rootThreadId: parent.rootThreadId,
+      parentThreadId,
+      epoch: this.bindingEpochs.get(parent.sessionId) ?? 0,
+    });
+    const current = this.subagentBindings.get(childThreadId);
+    if (current && !sameSubagentBinding(current, next)) {
+      this.subagentBindings.delete(childThreadId);
+      this.subagentBindingConflicts.add(childThreadId);
+      return false;
+    }
+    this.subagentBindings.set(childThreadId, next);
+    return true;
+  }
+
+  releaseSubagentBindings(sessionId, rootThreadId = null) {
+    const key = String(sessionId);
+    for (const [threadId, binding] of this.subagentBindings) {
+      if (binding.sessionId === key && (!rootThreadId || binding.rootThreadId === rootThreadId)) {
+        this.subagentBindings.delete(threadId);
+      }
+    }
+  }
+
+  dshSessionForInteractionThread(threadId) {
+    return this.interactionBindingForThread(threadId)?.sessionId ?? null;
+  }
+
   statusForSession(sessionId) {
     const status = this.rebindStates.get(String(sessionId));
     return status ? structuredClone(status) : null;
   }
 
   captureRequestOwnership(request) {
-    const threadId = requiredIdentity(request.params?.threadId, "threadId");
-    const sessionId = this.dshSessionForThread(threadId);
-    if (!sessionId) throw requestOwnershipError(request, "has no owning DSH Session");
-    if (this.rebindStates.has(sessionId)) throw requestOwnershipError(request, "requires rebind");
+    const threadId = requiredIdentity(
+      request.params?.threadId ?? request.params?.conversationId,
+      "threadId",
+    );
+    const binding = this.interactionBindingForThread(threadId);
+    if (!binding) throw requestOwnershipError(request, "has no owning DSH Session");
+    if (this.rebindStates.has(binding.sessionId)) throw requestOwnershipError(request, "requires rebind");
     return Object.freeze({
       requestId: String(request.id),
-      sessionId,
+      sessionId: binding.sessionId,
       threadId,
+      rootThreadId: binding.rootThreadId,
       turnId: optionalIdentity(request.params?.turnId),
-      itemId: optionalIdentity(request.params?.itemId),
-      epoch: this.bindingEpochs.get(sessionId) ?? 0,
+      itemId: optionalIdentity(request.params?.itemId ?? request.params?.callId),
+      epoch: this.bindingEpochs.get(binding.sessionId) ?? 0,
     });
   }
 
   assertRequestOwnership(ownership, request) {
-    const currentThread = this.links.get(ownership.sessionId);
+    const currentBinding = this.interactionBindingForThread(ownership.threadId);
     const currentEpoch = this.bindingEpochs.get(ownership.sessionId) ?? 0;
     const currentTurn = optionalIdentity(request.params?.turnId);
-    const currentItem = optionalIdentity(request.params?.itemId);
+    const currentItem = optionalIdentity(request.params?.itemId ?? request.params?.callId);
     if (String(request.id) !== ownership.requestId
-      || currentThread !== ownership.threadId
+      || currentBinding?.sessionId !== ownership.sessionId
+      || currentBinding?.rootThreadId !== ownership.rootThreadId
+      || this.links.get(ownership.sessionId) !== ownership.rootThreadId
       || currentEpoch !== ownership.epoch
       || currentTurn !== ownership.turnId
       || currentItem !== ownership.itemId
@@ -462,9 +559,11 @@ export class CodexDshAdapter extends LlmAdapter {
     }
     const sessionId = String(options.sessionId ?? "");
     if (!sessionId) throw new Error("Relay Codex adapter requires a DSH session id");
-    const projectedInput = latestUserInput(
+    const projectedInput = await latestUserInput(
       options.messages,
       this.forwardedSkillCatalogs.get(sessionId) ?? null,
+      this.attachments,
+      options.signal,
     );
     if (!projectedInput) throw new Error("Relay Codex adapter received no user text or image input");
     const input = { text: projectedInput.text, localImages: projectedInput.localImages };
@@ -488,14 +587,20 @@ export class CodexDshAdapter extends LlmAdapter {
     );
     const queue = new ActivityQueue(options.signal);
     const onActivity = (message) => {
+      this.observeSubagentActivity(message);
       const candidate = message.params?.threadId ?? message.params?.thread?.id;
       if (candidate === threadId) queue.push(message);
     };
     const stopActivity = subscribeRuntimeActivity(this.runtime, onActivity);
+    this.activeRootTurns.set(threadId, (this.activeRootTurns.get(threadId) ?? 0) + 1);
 
     let turnId = null;
     try {
-      const started = await this.runtime.sendMessage(threadId, { ...input, ...config });
+      const started = await this.runtime.sendMessage(threadId, {
+        ...input,
+        ...config,
+        reasoningSummary: "concise",
+      });
       if (projectedInput.skillCatalog !== null) {
         this.forwardedSkillCatalogs.set(sessionId, projectedInput.skillCatalog);
       }
@@ -546,6 +651,13 @@ export class CodexDshAdapter extends LlmAdapter {
     } finally {
       stopActivity();
       queue.close();
+      const activeTurns = this.activeRootTurns.get(threadId) ?? 0;
+      if (activeTurns <= 1) {
+        this.releaseSubagentBindings(sessionId, threadId);
+        this.activeRootTurns.delete(threadId);
+      } else {
+        this.activeRootTurns.set(threadId, activeTurns - 1);
+      }
     }
   }
 
@@ -585,6 +697,7 @@ export class CodexDshAdapter extends LlmAdapter {
         effort: options.reasoningEffort,
         sandbox: "read-only",
         approvalPolicy: "never",
+        reasoningSummary: "none",
       });
       turnId = started.id;
       const state = createStreamState();
@@ -643,7 +756,20 @@ export class CodexDshAdapter extends LlmAdapter {
     if (message.method === "item/agentMessage/delta") {
       return textDelta(state, params.itemId, "text", params.delta ?? "");
     }
+    if (message.method === "item/codeModeShell/outputDelta") {
+      const key = commandProcessKey(params.processId);
+      if (state.closedCommands.has(key)) return [];
+      return commandOutputDelta(state, key, "raw", params.delta ?? "");
+    }
+    if (message.method === "item/commandExecution/outputDelta") {
+      if (state.completed.has(params.itemId)) return [];
+      const key = state.commandKeys.get(params.itemId) ?? commandItemKey(params.itemId);
+      return commandOutputDelta(state, key, "native", params.delta ?? "");
+    }
     if (message.method === "item/started") {
+      if (params.item?.type === "commandExecution") {
+        state.commandKeys.set(params.item.id, commandOutputKey(params.item));
+      }
       return [];
     }
     if (message.method === "item/completed") {
@@ -660,6 +786,43 @@ export class CodexDshAdapter extends LlmAdapter {
     }
     if (item.type === "agentMessage") {
       return completeTextItem(state, item.id, "text", item.text ?? "");
+    }
+    if (item.type === "commandExecution") {
+      const key = state.commandKeys.get(item.id) ?? commandOutputKey(item);
+      state.closedCommands.add(key);
+      return completeCommandOutput(state, key, item.aggregatedOutput);
+    }
+    if (item.type === "mcpToolCall" && item.status === "completed") {
+      const content = Array.isArray(item.result?.content) ? item.result.content : [];
+      const images = content.map((entry, contentIndex) => ({ entry, contentIndex }))
+        .filter(({ entry }) => entry?.type === "image");
+      if (!this.attachments || images.length === 0) return [];
+      const chunks = [];
+      for (const { entry, contentIndex } of images) {
+        const index = state.nextIndex++;
+        try {
+          const attachment = await importCodexMcpImage(entry, item.id, contentIndex, this.attachments);
+          chunks.push(
+            { type: "block-start", index, blockType: "image" },
+            { type: "block-end", index, block: { type: "image", attachment } },
+          );
+        } catch (error) {
+          const reason = imagePreviewFailureReason(error);
+          this.logger.warn?.("Codex MCP image preview unavailable", {
+            threadId,
+            turnId,
+            itemId: item.id,
+            itemType: item.type,
+            contentIndex,
+            reason,
+          });
+          chunks.push(
+            { type: "block-start", index, blockType: "text" },
+            { type: "block-end", index, block: { type: "text", text: `MCP image preview unavailable: ${item.server}/${item.tool}.` } },
+          );
+        }
+      }
+      return chunks;
     }
     if (item.type === "imageGeneration" || item.type === "imageView") {
       if (!this.attachments) return [];
@@ -882,6 +1045,9 @@ function createStreamState() {
     nextIndex: 0,
     blocks: new Map(),
     completed: new Set(),
+    commandKeys: new Map(),
+    commandSources: new Map(),
+    closedCommands: new Set(),
   };
 }
 
@@ -903,6 +1069,7 @@ function textDelta(state, id, type, delta) {
 function completeTextItem(state, id, type, completeText) {
   const chunks = [];
   let block = state.blocks.get(id);
+  if (!block && !completeText) return chunks;
   if (!block) {
     block = { index: state.nextIndex++, type, text: "", closed: false };
     state.blocks.set(id, block);
@@ -918,6 +1085,71 @@ function completeTextItem(state, id, type, completeText) {
     chunks.push({ type: "block-end", index: block.index, block: { type, text: block.text } });
   }
   return chunks;
+}
+
+function completeCommandOutput(state, id, aggregatedOutput) {
+  const completeText = typeof aggregatedOutput === "string" ? aggregatedOutput : "";
+  const sources = state.commandSources.get(id);
+  const chunks = [];
+  if (sources && completeText.startsWith(sources.native)) {
+    const suffix = completeText.slice(sources.native.length);
+    if (suffix) chunks.push(...commandOutputDelta(state, id, "native", suffix));
+  }
+  let block = state.blocks.get(id);
+  if (!block && !completeText) return chunks;
+  if (!block) {
+    block = { index: state.nextIndex++, type: "text", text: "", closed: false };
+    state.blocks.set(id, block);
+    chunks.push({ type: "block-start", index: block.index, blockType: "text" });
+  }
+  if (block.closed) return chunks;
+  if (completeText.startsWith(block.text) && completeText.length > block.text.length) {
+    const delta = completeText.slice(block.text.length);
+    block.text = completeText;
+    chunks.push({ type: "text-delta", index: block.index, text: delta });
+  } else if (completeText && completeText !== block.text && !sources?.raw) {
+    block.text = completeText;
+  }
+  block.closed = true;
+  chunks.push({ type: "block-end", index: block.index, block: { type: "text", text: block.text } });
+  return chunks;
+}
+
+function commandOutputDelta(state, id, source, delta) {
+  if (!id || !delta) return [];
+  let sources = state.commandSources.get(id);
+  if (!sources) {
+    sources = { raw: "", native: "" };
+    state.commandSources.set(id, sources);
+  }
+  const previous = sources[source];
+  sources[source] += delta;
+  const other = sources[source === "raw" ? "native" : "raw"];
+  const comparable = other.startsWith(previous) ? other.slice(previous.length) : "";
+  const commonLength = commonPrefixLength(delta, comparable);
+  const duplicateLength = commonLength === delta.length || commonLength === comparable.length
+    ? commonLength
+    : 0;
+  return textDelta(state, id, "text", delta.slice(duplicateLength));
+}
+
+function commonPrefixLength(left, right) {
+  const limit = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < limit && left[index] === right[index]) index += 1;
+  return index;
+}
+
+function commandOutputKey(item) {
+  return item?.processId != null ? commandProcessKey(item.processId) : commandItemKey(item?.id);
+}
+
+function commandProcessKey(processId) {
+  return processId == null ? null : `command-process:${processId}`;
+}
+
+function commandItemKey(itemId) {
+  return itemId == null ? null : `command-item:${itemId}`;
 }
 
 function permissionConfiguration(events) {
@@ -942,7 +1174,7 @@ function reasoningEffortName(value) {
   return String(value) === "xhigh" ? "Extra high" : humanize(value);
 }
 
-function latestUserInput(messages, forwardedSkillCatalog) {
+async function latestUserInput(messages, forwardedSkillCatalog, attachments, signal) {
   let input = null;
   let inputIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -954,9 +1186,11 @@ function latestUserInput(messages, forwardedSkillCatalog) {
       .map((block) => block.text)
       .join("\n")
       .trim();
-    const localImages = (message.content ?? [])
-      .map(localImage)
-      .filter(Boolean);
+    const localImages = [];
+    for (const block of message.content ?? []) {
+      const image = await localImage(block, attachments, signal);
+      if (image) localImages.push(image);
+    }
     if (text || localImages.length > 0) {
       input = { text, localImages };
       inputIndex = index;
@@ -1012,7 +1246,7 @@ function isSkillInvocation(source) {
     && source.name.length > 0;
 }
 
-function localImage(block) {
+async function localImage(block, attachments, signal) {
   if (block?.type !== "image" && block?.type !== "file") return null;
   if (block.type === "file" && !isImageFile(block)) return null;
   const path = block.path
@@ -1025,6 +1259,9 @@ function localImage(block) {
     ?? block.attachment?.fsPath
     ?? block.attachment?.filePath
     ?? block.attachment?.localPath;
+  if (!path && (block.type === "image" || block.attachment)) {
+    return materializeCodexAttachment(block, attachments, signal);
+  }
   if (!path) return null;
   return {
     path,
@@ -1085,6 +1322,13 @@ function isRelayActivation(source) {
 
 function compact(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null));
+}
+
+function sameSubagentBinding(left, right) {
+  return left.sessionId === right.sessionId
+    && left.rootThreadId === right.rootThreadId
+    && left.parentThreadId === right.parentThreadId
+    && left.epoch === right.epoch;
 }
 
 function runtimeModels(runtime) {

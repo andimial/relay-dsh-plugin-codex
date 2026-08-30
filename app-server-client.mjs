@@ -9,12 +9,16 @@ const NATIVE_CODEX_CLIENT_INFO = {
   version: "26.810.52044",
 };
 
-export const NATIVE_CODEX_APP_SERVER_ARGS = [
+export const RELAY_CODEX_APP_SERVER_ARGS = [
   "-c",
   "features.code_mode_host=true",
+  "-c",
+  "features.shell_snapshot=false",
   "app-server",
   "--analytics-default-enabled",
 ];
+
+const BYPASS_HOOK_TRUST_FLAG = "--dangerously-bypass-hook-trust";
 
 const NATIVE_CODEX_CAPABILITIES = {
   experimentalApi: true,
@@ -28,7 +32,6 @@ const NATIVE_CODEX_CAPABILITIES = {
   optOutNotificationMethods: [
     "thread/environment/connected",
     "thread/environment/disconnected",
-    "rawResponseItem/completed",
     "externalAgentConfig/import/progress",
     "thread/compacted",
     "windows/worldWritableWarning",
@@ -102,7 +105,7 @@ const NATIVE_CODEX_CAPABILITIES = {
 export class CodexAppServerClient extends EventEmitter {
   constructor({
     command,
-    args = NATIVE_CODEX_APP_SERVER_ARGS,
+    args = RELAY_CODEX_APP_SERVER_ARGS,
     requestTimeoutMs = 30_000,
     clientInfo = NATIVE_CODEX_CLIENT_INFO,
     capabilities = NATIVE_CODEX_CAPABILITIES,
@@ -112,6 +115,7 @@ export class CodexAppServerClient extends EventEmitter {
     this.command = launch.command;
     this.commandSource = launch.source;
     this.appServerArgs = [...args];
+    this.bypassHookTrust = args.includes(BYPASS_HOOK_TRUST_FLAG);
     this.args = [...launch.argsPrefix, ...args];
     this.requestTimeoutMs = requestTimeoutMs;
     this.clientInfo = structuredClone(clientInfo);

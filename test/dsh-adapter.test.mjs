@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+
+import { BlockAssembler, createMessage } from "@deepseek-ai/dsh-llm";
+import { Session, SessionId } from "@deepseek-ai/dsh-session";
 
 import {
   CODEX_THREAD_ACTIVE_WRITER,
@@ -14,6 +17,7 @@ import {
   detectImageMediaType,
   importCodexGeneratedImage,
   importCodexImage,
+  importCodexMcpImage,
 } from "../codex-image.js";
 import { CodexLinkStore } from "../codex-link-store.js";
 import { CODEX_APP_DYNAMIC_TOOLS, handleCodexServerRequest } from "../codex-tools.js";
@@ -39,14 +43,136 @@ test("the Codex preset streams reasoning and answers into the native DSH convers
 
   assert.equal(runtime.sent[0].message.text, "actual question");
   assert.equal(runtime.sent[0].message.model, "codex-test");
+  assert.equal(runtime.sent[0].message.reasoningSummary, "concise");
   assert.equal(chunks.find(chunk => chunk.type === "reasoning-delta").text, "Checked the workspace.");
-  assert.equal(chunks.find(chunk => chunk.type === "text-delta").text, "done");
+  assert.ok(chunks.some(chunk => chunk.type === "text-delta" && chunk.text === "ok\n"));
+  assert.ok(chunks.some(chunk => chunk.type === "text-delta" && chunk.text === "done"));
   assert.equal(chunks.at(-1).replayState.threadId, "thread-1");
   assert.deepEqual([...adapter.ownedTurnIdsForSession(agent.id)], []);
   assert.deepEqual(agent.appended, []);
   assert.equal(runtime.createdConfig.dynamicTools.some(tool => tool.name === "relay_wait_for_event"), false);
   const codexAppTools = runtime.createdConfig.dynamicTools.find(tool => tool.type === "namespace" && tool.name === "codex_app");
   assert.deepEqual(codexAppTools.tools.map(tool => tool.name), ["load_workspace_dependencies"]);
+});
+
+test("an empty App Server reasoning item creates no empty DSH disclosure", async () => {
+  const runtime = new EmptyReasoningRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    reasoningEffort: "high",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "answer only" }] }],
+  }));
+
+  assert.equal(chunks.some(chunk => chunk.blockType === "reasoning" || chunk.block?.type === "reasoning"), false);
+  assert.equal(chunks.filter(chunk => chunk.type === "text-delta").map(chunk => chunk.text).join(""), "done");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+});
+
+test("command output streams before completion and settles without duplication", async () => {
+  const runtime = new StreamingCommandRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+  const iterator = adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "run the delayed marker command" }],
+    }],
+  })[Symbol.asyncIterator]();
+
+  const chunks = [];
+  let firstMarker = null;
+  while (!firstMarker) {
+    const next = await iterator.next();
+    assert.equal(next.done, false, "stream ended before the first command marker");
+    chunks.push(next.value);
+    if (next.value.type === "text-delta" && next.value.text.includes("STREAM_FIRST_4102")) {
+      firstMarker = next.value;
+    }
+  }
+  assert.equal(runtime.commandCompleted, false, "first marker was delayed until command completion");
+
+  for (;;) {
+    const next = await iterator.next();
+    if (next.done) break;
+    chunks.push(next.value);
+  }
+
+  const commandBlock = chunks.find(chunk =>
+    chunk.type === "block-end"
+      && chunk.block?.type === "text"
+      && chunk.block.text.includes("STREAM_FIRST_4102"));
+  assert.equal(commandBlock.block.text, "STREAM_FIRST_4102\nREPEATED_LINE\nREPEATED_LINE\nSTREAM_LAST_8604\n");
+  assert.equal(commandBlock.block.text.match(/STREAM_FIRST_4102/g)?.length, 1);
+  assert.equal(commandBlock.block.text.match(/STREAM_LAST_8604/g)?.length, 1);
+  assert.equal(commandBlock.block.text.match(/REPEATED_LINE/g)?.length, 2);
+  assert.equal(chunks.filter(chunk => chunk.type === "text-delta" && chunk.text === "done").length, 1);
+  assert.equal(chunks.some(chunk => chunk.blockType === "tool-call" || chunk.block?.type === "tool-call"), false);
+  assert.equal(chunks.filter(chunk => chunk.type === "finish").length, 1);
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+
+  const assembler = new BlockAssembler();
+  for (const chunk of chunks) assembler.push(chunk);
+  assert.deepEqual(assembler.message().content, [
+    { type: "text", text: "STREAM_FIRST_4102\nREPEATED_LINE\nREPEATED_LINE\nSTREAM_LAST_8604\n" },
+    { type: "text", text: "done" },
+  ]);
+
+  const persisted = Session.create(SessionId("command-output-persistence"));
+  persisted.append("turn/start", { turn: 1 });
+  persisted.append("assistant/message", {
+    turn: 1,
+    step: 1,
+    message: createMessage({
+      role: "assistant",
+      content: assembler.message().content,
+      source: { kind: "model", provider: "relay-codex", model: "codex-test" },
+    }),
+  }, { surfaceOp: "append" });
+  persisted.append("turn/end", { turn: 1, reason: { kind: "completed" } });
+  const stored = JSON.parse(JSON.stringify({ header: persisted.header, events: persisted.events }));
+  const reloaded = Session.fromRestore(SessionId("command-output-persistence"), stored.events, stored.header);
+  assert.deepEqual(reloaded.deriveMessages()[0].content, assembler.message().content);
+});
+
+test("command completion backfills output, reconciles snapshots, and ignores empty or late data", async () => {
+  const runtime = new CommandCompletionRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "exercise command completion edges" }],
+    }],
+  }));
+
+  const assembler = new BlockAssembler();
+  for (const chunk of chunks) assembler.push(chunk);
+  assert.deepEqual(assembler.message().content, [
+    { type: "text", text: "COMPLETION_ONLY\n" },
+    { type: "text", text: "CROSS_SOURCE_SAME\n" },
+    { type: "text", text: "AUTHORITATIVE_FINAL\n" },
+    { type: "text", text: "done" },
+  ]);
+  assert.equal(JSON.stringify(assembler.message()).match(/CROSS_SOURCE_SAME/g)?.length, 1);
+  assert.equal(chunks.some(chunk => JSON.stringify(chunk).includes("LATE_DELTA")), false);
+  assert.equal(chunks.filter(chunk => chunk.type === "block-start").length, 4);
 });
 
 test("an unconfirmed command cleanup is surfaced instead of reporting a successful stop", async () => {
@@ -290,6 +416,121 @@ test("user image messages are forwarded as Codex local image inputs", async () =
   }]);
 });
 
+test("DSH attachment images are read, materialized, and forwarded in order", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-dsh-input-"));
+  const workspace = join(directory, "workspace");
+  await mkdir(workspace);
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = join(directory, "codex-home");
+  context.after(async () => {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const first = pngFixture("first-image");
+  const second = pngFixture("second-image");
+  const stored = new Map([
+    ["first", first],
+    ["second", second],
+  ]);
+  const reads = [];
+  const attachments = {
+    async readImage(ref, signal) {
+      signal?.throwIfAborted();
+      reads.push(ref.attachmentId);
+      return { ref, data: Uint8Array.from(stored.get(ref.attachmentId)) };
+    },
+  };
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve(), attachments });
+  const agent = fakeAgent({ cwd: workspace });
+  adapter.attachAgent(agent);
+
+  await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{
+      role: "user",
+      source: { kind: "user" },
+      content: [
+        { type: "image", attachment: { attachmentId: "first", mediaType: "image/png", name: "clipboard.png" } },
+        { type: "image", attachment: { attachmentId: "second", mediaType: "image/png", name: "clipboard.png" } },
+        { type: "text", text: "read both markers" },
+      ],
+    }],
+  }));
+
+  assert.deepEqual(reads, ["first", "second"]);
+  assert.equal(runtime.sent[0].message.text, "read both markers");
+  assert.deepEqual(runtime.sent[0].message.localImages.map(image => image.label), ["clipboard.png", "clipboard.png"]);
+  assert.deepEqual(await readFile(runtime.sent[0].message.localImages[0].path), first);
+  assert.deepEqual(await readFile(runtime.sent[0].message.localImages[1].path), second);
+  assert.notEqual(runtime.sent[0].message.localImages[0].path, runtime.sent[0].message.localImages[1].path);
+  assert.deepEqual(await readdir(workspace), []);
+});
+
+test("invalid DSH image attachments fail before Codex Thread creation", async (t) => {
+  const scenarios = [
+    { name: "missing reference", block: { type: "image" }, attachments: { async readImage() {} }, code: "CODEX_IMAGE_INPUT_INVALID" },
+    { name: "service unavailable", attachments: null, code: "CODEX_IMAGE_ATTACHMENTS_UNAVAILABLE" },
+    { name: "read failure", attachments: { async readImage() { throw new Error("corrupt"); } }, code: "CODEX_IMAGE_READ_FAILED" },
+    { name: "invalid bytes", attachments: { async readImage(ref) { return { ref, data: Uint8Array.from([1, 2, 3]) }; } }, code: "CODEX_IMAGE_TYPE_UNSUPPORTED" },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const runtime = new FakeRuntime();
+      const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve(), attachments: scenario.attachments });
+      const agent = fakeAgent();
+      adapter.attachAgent(agent);
+      await assert.rejects(collect(adapter.stream({
+        provider: "relay-codex",
+        model: "codex-test",
+        sessionId: agent.id,
+        messages: [{ role: "user", source: { kind: "user" }, content: [
+          scenario.block ?? { type: "image", attachment: { attachmentId: "broken", mediaType: "image/png" } },
+          { type: "text", text: "describe image" },
+        ] }],
+      })), error => error.code === scenario.code);
+      assert.equal(runtime.created, 0);
+      assert.equal(runtime.sent.length, 0);
+    });
+  }
+});
+
+test("a pure DSH image message starts one Codex image Turn", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-codex-pure-image-"));
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = directory;
+  context.after(async () => {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const data = pngFixture("pure-image");
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    attachments: { async readImage(ref) { return { ref, data: Uint8Array.from(data) }; } },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [
+      { type: "image", attachment: { attachmentId: "only-image", mediaType: "image/png" } },
+    ] }],
+  }));
+
+  assert.equal(runtime.sent.length, 1);
+  assert.equal(runtime.sent[0].message.text, "");
+  assert.equal(runtime.sent[0].message.localImages.length, 1);
+});
+
 test("Codex permissions follow effective DSH knobs, not failed preset intent", async () => {
   const runtime = new FakeRuntime();
   const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
@@ -359,8 +600,10 @@ test("automatic title generation uses an isolated ephemeral Codex thread", async
   assert.equal(auxiliaryConfig.approvalPolicy, "never");
   assert.equal(auxiliaryConfig.threadSource, "relay.codex.auxiliary");
   assert.match(auxiliaryConfig.developerInstructions, /Do not call tools/);
+  assert.equal(mainCall.message.reasoningSummary, "concise");
+  assert.equal(titleCall.message.reasoningSummary, "none");
   assert.deepEqual(runtime.released, [titleCall.threadId]);
-  assert.equal(mainChunks.find(chunk => chunk.type === "text-delta").text, "done");
+  assert.ok(mainChunks.some(chunk => chunk.type === "text-delta" && chunk.text === "done"));
   assert.equal(titleChunks.find(chunk => chunk.type === "text-delta").text, "项目文件查询");
   assert.deepEqual(agent.appended, []);
 });
@@ -437,6 +680,7 @@ test("DSH compaction also runs outside the bound Codex thread", async () => {
   assert.match(runtime.sent[0].message.text, /user: first request/);
   assert.match(runtime.sent[0].message.text, /assistant: first answer/);
   assert.match(runtime.sent[0].message.text, /user: produce the compact summary/);
+  assert.equal(runtime.sent[0].message.reasoningSummary, "none");
   assert.equal(runtime.createdConfigs[0].ephemeral, true);
   assert.equal(adapter.threadFor(agent.id), null);
   assert.equal(agent.appended.length, 0);
@@ -854,11 +1098,12 @@ test("Codex images are imported through the DSH attachment store and cannot esca
   const imagePath = join(workspace, "result.png");
   const textPath = join(workspace, "secret.txt");
   const outsidePath = join(outside, "outside.png");
+  const escapedDirectory = join(workspace, "escaped");
   const jpeg = await readFile(new URL("../docs/images/dsh-new-session-backends.jpg", import.meta.url));
   await writeFile(imagePath, jpeg);
   await writeFile(textPath, "not-an-image");
   await writeFile(outsidePath, "outside");
-  await symlink(outsidePath, join(workspace, "escaped.png"));
+  await symlink(outside, escapedDirectory, process.platform === "win32" ? "junction" : "dir");
   const saved = [];
   const attachments = {
     async saveImage(input) {
@@ -878,9 +1123,16 @@ test("Codex images are imported through the DSH attachment store and cannot esca
   }, [workspace], attachments);
   assert.equal(saved[1].mediaType, "image/jpeg");
   assert.equal(saved[1].name, "codex-generated.jpg");
+  const unpaddedJpeg = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
+  await importCodexGeneratedImage({
+    id: "generated-unpadded",
+    result: unpaddedJpeg.toString("base64").replace(/=+$/, ""),
+  }, [workspace], attachments);
+  assert.equal(saved[2].mediaType, "image/jpeg");
+  assert.equal(saved[2].name, "codex-generated-unpadded.jpg");
   await assert.rejects(importCodexImage(textPath, [workspace], attachments), /unsupported or malformed Codex image data/);
   await assert.rejects(allowedRealPath(outsidePath, [workspace]), /outside the Codex workspace/);
-  await assert.rejects(allowedRealPath(join(workspace, "escaped.png"), [workspace]), /outside the Codex workspace/);
+  await assert.rejects(allowedRealPath(join(escapedDirectory, "outside.png"), [workspace]), /outside the Codex workspace/);
 });
 
 test("Codex image media types are derived from supported byte signatures", () => {
@@ -893,6 +1145,167 @@ test("Codex image media types are derived from supported byte signatures", () =>
   ];
 
   for (const [data, expected] of samples) assert.equal(detectImageMediaType(data), expected);
+});
+
+test("completed MCP image results reach DSH attachments in exact content order", async () => {
+  const first = pngFixture("MCP_IMAGE_FIRST_9914");
+  const second = Buffer.concat([Buffer.from("GIF89a", "ascii"), Buffer.from("MCP_IMAGE_SECOND_9914")]);
+  const runtime = new McpImageRuntime({
+    type: "mcpToolCall",
+    id: "mcp-result-9914",
+    server: "relay_results_9914",
+    tool: "result_image_9914",
+    status: "completed",
+    result: {
+      content: [
+        { type: "text", text: "MCP_IMAGE_META_9914" },
+        { type: "image", mimeType: "image/png", data: first.toString("base64") },
+        { type: "resource", resource: { uri: "fixture://ignored" } },
+        { type: "image", mimeType: "image/gif", data: second.toString("base64") },
+      ],
+      structuredContent: { type: "image", data: "must-not-be-projected" },
+      _meta: null,
+    },
+    error: null,
+  });
+  const saved = [];
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    attachments: {
+      async saveImage(input) {
+        saved.push(input);
+        return {
+          attachmentId: `mcp-att-${saved.length}`,
+          mediaType: input.mediaType,
+          bytes: input.data.length,
+          name: input.name,
+        };
+      },
+    },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "show MCP image" }] }],
+  }));
+
+  assert.equal(saved.length, 2);
+  assert.deepEqual(saved.map(entry => entry.mediaType), ["image/png", "image/gif"]);
+  assert.deepEqual(saved.map(entry => Buffer.from(entry.data)), [first, second]);
+  assert.deepEqual(saved.map(entry => entry.name), [
+    "codex-mcp-mcp-result-9914-2.png",
+    "codex-mcp-mcp-result-9914-4.gif",
+  ]);
+  assert.deepEqual(chunks.filter(chunk => chunk.block?.type === "image").map(chunk => chunk.block.attachment.attachmentId), [
+    "mcp-att-1",
+    "mcp-att-2",
+  ]);
+  assert.equal(chunks.some(chunk => JSON.stringify(chunk).includes("must-not-be-projected")), false);
+  assert.equal(chunks.find(chunk => chunk.block?.text === "MCP_IMAGE_SEEN")?.block.text, "MCP_IMAGE_SEEN");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+});
+
+test("malformed or rejected MCP images become sanitized placeholders without failing the Turn", async () => {
+  const png = pngFixture("MCP_IMAGE_FAILURE_9914");
+  const warnings = [];
+  const runtime = new McpImageRuntime({
+    type: "mcpToolCall",
+    id: "mcp-result-bad/identifier",
+    server: "relay_results_9914",
+    tool: "result_image_9914",
+    status: "completed",
+    result: {
+      content: [
+        { type: "image", mimeType: "image/png", data: "not base64" },
+        { type: "image", mimeType: "image/bmp", data: png.toString("base64") },
+        { type: "image", mimeType: "image/jpeg", data: png.toString("base64") },
+        { type: "image", mimeType: "image/png", data: png.toString("base64") },
+      ],
+      structuredContent: null,
+      _meta: null,
+    },
+    error: null,
+  });
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    logger: { warn(message, details) { warnings.push({ message, details }); } },
+    attachments: { async saveImage() { throw new Error("storage failed at /private/customer/image.png"); } },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "show malformed MCP images" }] }],
+  }));
+
+  assert.equal(chunks.filter(chunk => chunk.block?.text?.startsWith("MCP image preview unavailable")).length, 4);
+  assert.equal(chunks.find(chunk => chunk.block?.text === "MCP_IMAGE_SEEN")?.block.text, "MCP_IMAGE_SEEN");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
+  assert.deepEqual(warnings.map(entry => entry.details.reason), [
+    "IMAGE_BASE64_INVALID",
+    "IMAGE_DATA_INVALID",
+    "IMAGE_TYPE_MISMATCH",
+    "IMAGE_ATTACHMENT_REJECTED",
+  ]);
+  assert.equal(JSON.stringify({ chunks, warnings }).includes("/private/customer/image.png"), false);
+});
+
+test("MCP image decoding rejects oversized payloads before attachment storage", async () => {
+  const oversized = Buffer.alloc(25 * 1024 * 1024 + 1).toString("base64");
+  let saves = 0;
+  await assert.rejects(importCodexMcpImage({
+    type: "image",
+    mimeType: "image/png",
+    data: oversized,
+  }, "oversized", 0, {
+    async saveImage() { saves += 1; },
+  }), /invalid size/);
+  assert.equal(saves, 0);
+});
+
+test("failed MCP tool results never synthesize image blocks", async () => {
+  const runtime = new McpImageRuntime({
+    type: "mcpToolCall",
+    id: "mcp-result-failed",
+    server: "relay_results_9914",
+    tool: "result_image_9914",
+    status: "failed",
+    result: {
+      content: [{ type: "image", mimeType: "image/png", data: pngFixture("IGNORED").toString("base64") }],
+      structuredContent: null,
+      _meta: null,
+    },
+    error: { message: "fixture failure" },
+  });
+  let saves = 0;
+  const adapter = new CodexDshAdapter({
+    runtime,
+    ready: Promise.resolve(),
+    attachments: { async saveImage() { saves += 1; } },
+  });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "failed MCP" }] }],
+  }));
+
+  assert.equal(saves, 0);
+  assert.equal(chunks.some(chunk => chunk.block?.type === "image"), false);
+  assert.equal(chunks.find(chunk => chunk.block?.text === "MCP_IMAGE_SEEN")?.block.text, "MCP_IMAGE_SEEN");
+  assert.equal(chunks.at(-1).reason.kind, "stop");
 });
 
 test("the original JPEG-as-.png Session history replays without failing the DSH turn", async (context) => {
@@ -1052,6 +1465,79 @@ test("Codex interactions use DSH approval and question services without Relay Ev
     }),
   });
   assert.deepEqual(runtime.resolved.at(-1).response.answers, { choice: ["Continue", "with tests"] });
+});
+
+test("modern and legacy approval identities share the same fail-closed ownership boundary", async () => {
+  const agent = fakeAgent();
+  const adapterRuntime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime: adapterRuntime, ready: Promise.resolve() });
+  adapter.attachAgent(agent);
+  assert.equal(await adapter.ensureThread(agent.id), "thread-1");
+
+  for (const [index, outcome] of ["rejected", "cancelled", "unavailable"].entries()) {
+    const runtime = new InteractionRuntime();
+    await handleCodexServerRequest({
+      agents: { get: id => id === agent.id ? agent : null },
+      approval: { async request() { return outcome; } },
+      userQuestions: { async ask() { throw new Error("unexpected question"); } },
+    }, {
+      adapter,
+      runtime,
+      request: request(`decline-${index}`, "item/commandExecution/requestApproval", {
+        turnId: `turn-${index}`,
+        itemId: `item-${index}`,
+        command: "git status",
+      }),
+    });
+    assert.deepEqual(runtime.resolved, [{
+      id: `decline-${index}`,
+      response: { action: "decline" },
+    }]);
+    assert.equal(runtime.rejected.length, 0);
+  }
+
+  const legacyRuntime = new InteractionRuntime();
+  await handleCodexServerRequest({
+    agents: { get: id => id === agent.id ? agent : null },
+    approval: { async request() { return "allowed-once"; } },
+    userQuestions: { async ask() { throw new Error("unexpected question"); } },
+  }, {
+    adapter,
+    runtime: legacyRuntime,
+    request: {
+      id: "legacy-approval",
+      method: "execCommandApproval",
+      params: {
+        conversationId: "thread-1",
+        callId: "legacy-call",
+        command: ["git", "status"],
+      },
+    },
+  });
+  assert.deepEqual(legacyRuntime.resolved, [{
+    id: "legacy-approval",
+    response: { action: "accept" },
+  }]);
+
+  const missingOwnerRuntime = new InteractionRuntime();
+  let approvalCalls = 0;
+  await handleCodexServerRequest({
+    agents: { get() { return null; } },
+    approval: { async request() { approvalCalls += 1; return "allowed-once"; } },
+    userQuestions: { async ask() { throw new Error("unexpected question"); } },
+  }, {
+    adapter,
+    runtime: missingOwnerRuntime,
+    request: request("unowned-approval", "item/commandExecution/requestApproval", {
+      threadId: "unowned-thread",
+      turnId: "unowned-turn",
+      itemId: "unowned-item",
+      command: "git status",
+    }),
+  });
+  assert.equal(approvalCalls, 0);
+  assert.equal(missingOwnerRuntime.resolved.length, 0);
+  assert.match(missingOwnerRuntime.rejected[0].error.message, /no owning live DSH Session/);
 });
 
 test("disconnect/reconnect stale approval replay fails closed when its Session binding changes", async () => {
@@ -1238,6 +1724,246 @@ test("Codex aliases a reserved DSH MCP tool and executes its original name", asy
   });
 });
 
+test("subagent activity routes descendant interactions only while the owning root Turn is live", async () => {
+  const calls = [];
+  const runtime = new SubagentActivityRuntime();
+  const agent = fakeAgent({
+    tools: {
+      async execute(input) {
+        calls.push(input);
+        return {
+          isError: false,
+          content: [{ type: "text", text: "CHILD_ORACLE_6842_ZKPT" }],
+        };
+      },
+    },
+  });
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  adapter.attachAgent(agent);
+
+  const stream = collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "delegate" }] }],
+    tools: [{
+      name: "read",
+      description: "Read a UTF-8 text file.",
+      parameters: {
+        type: "object",
+        properties: { file_path: { type: "string" } },
+        required: ["file_path"],
+        additionalProperties: false,
+      },
+    }],
+  }));
+  await runtime.activityObserved.promise;
+  assert.deepEqual(adapter.interactionBindingForThread("thread-child"), {
+    sessionId: agent.id,
+    rootThreadId: "thread-1",
+    requestThreadId: "thread-child",
+  });
+  assert.deepEqual(adapter.interactionBindingForThread("thread-grandchild"), {
+    sessionId: agent.id,
+    rootThreadId: "thread-1",
+    requestThreadId: "thread-grandchild",
+  });
+  const interactions = new InteractionRuntime();
+  const approvalCalls = [];
+  const questionCalls = [];
+  const ctx = {
+    agents: { get: id => id === agent.id ? agent : null },
+    approval: { async request(input) { approvalCalls.push(input); return "allowed-once"; } },
+    userQuestions: {
+      async ask(input) {
+        questionCalls.push(input);
+        return { answers: [{ id: "choice", selected: ["Continue"] }] };
+      },
+    },
+  };
+
+  for (const [id, threadId] of [["child-read", "thread-child"], ["nested-read", "thread-grandchild"]]) {
+    await handleCodexServerRequest(ctx, {
+      adapter,
+      runtime: interactions,
+      request: request(id, "item/dynamicTool/call", {
+        threadId,
+        namespace: "dsh",
+        name: "read",
+        arguments: { file_path: "subagent-fixture/child-oracle.txt" },
+      }),
+    });
+  }
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map(call => call.arguments), [
+    { file_path: "subagent-fixture/child-oracle.txt" },
+    { file_path: "subagent-fixture/child-oracle.txt" },
+  ]);
+  assert.ok(calls.every(call => call.agent === agent));
+  assert.deepEqual(interactions.dynamic, [
+    { id: "child-read", success: true, text: "CHILD_ORACLE_6842_ZKPT" },
+    { id: "nested-read", success: true, text: "CHILD_ORACLE_6842_ZKPT" },
+  ]);
+
+  await handleCodexServerRequest(ctx, {
+    adapter,
+    runtime: interactions,
+    request: request("child-approval", "item/commandExecution/requestApproval", {
+      threadId: "thread-child",
+      itemId: "child-command",
+      command: "printf child",
+    }),
+  });
+  await handleCodexServerRequest(ctx, {
+    adapter,
+    runtime: interactions,
+    request: request("child-question", "item/tool/requestUserInput", {
+      threadId: "thread-grandchild",
+      questions: [{ id: "choice", header: "Action", question: "Continue?" }],
+    }),
+  });
+  assert.equal(approvalCalls.length, 1);
+  assert.equal(approvalCalls[0].agent, agent);
+  assert.equal(questionCalls.length, 1);
+  assert.equal(questionCalls[0].agent, agent);
+  assert.deepEqual(interactions.resolved, [
+    { id: "child-approval", response: { action: "accept" } },
+    { id: "child-question", response: { answers: { choice: ["Continue"] } } },
+  ]);
+
+  assert.equal(adapter.observeSubagentActivity(notification("item/started", "thread-1", "turn-1", {
+    item: {
+      type: "subAgentActivity",
+      id: "duplicate-child",
+      agentThreadId: "thread-child",
+      kind: "started",
+    },
+  })), true);
+  assert.equal(adapter.observeSubagentActivity(notification("item/started", "thread-1", "turn-1", {
+    item: {
+      type: "subAgentActivity",
+      id: "conflicting-grandchild",
+      agentThreadId: "thread-grandchild",
+      kind: "started",
+    },
+  })), false);
+  await handleCodexServerRequest(ctx, {
+    adapter,
+    runtime: interactions,
+    request: request("reject-conflicting-grandchild", "item/dynamicTool/call", {
+      threadId: "thread-grandchild",
+      namespace: "dsh",
+      name: "read",
+      arguments: { file_path: "subagent-fixture/child-oracle.txt" },
+    }),
+  });
+  assert.equal(calls.length, 2);
+  assert.match(interactions.rejected.at(-1).error.message, /no owning live DSH Session/);
+
+  for (const [threadId, sessionId, parentThreadId] of [
+    ["unbound-child", "unbound-root", "unbound-root"],
+    ["orphan-child", "thread-1", null],
+    ["cyclic-child", "thread-1", "cyclic-child"],
+    ["cross-parent", "different-root", "thread-1"],
+    ["cross-child", "thread-1", "cross-parent"],
+  ]) {
+    runtime.sessions.set(threadId, { id: threadId, sessionId, parentThreadId });
+    await handleCodexServerRequest(ctx, {
+      adapter,
+      runtime: interactions,
+      request: request(`reject-${threadId}`, "item/dynamicTool/call", {
+        threadId,
+        namespace: "dsh",
+        name: "read",
+        arguments: { file_path: "subagent-fixture/child-oracle.txt" },
+      }),
+    });
+  }
+
+  assert.equal(calls.length, 2);
+  assert.equal(interactions.rejected.length, 6);
+  assert.ok(interactions.rejected.every(entry => /no owning live DSH Session/.test(entry.error.message)));
+
+  const approvalStarted = Promise.withResolvers();
+  let releaseApproval;
+  const stale = handleCodexServerRequest({
+    ...ctx,
+    approval: {
+      request() {
+        approvalStarted.resolve();
+        return new Promise(resolve => { releaseApproval = resolve; });
+      },
+    },
+  }, {
+    adapter,
+    runtime: interactions,
+    request: request("stale-child-approval", "item/commandExecution/requestApproval", {
+      threadId: "thread-child",
+      itemId: "stale-child-command",
+      command: "printf stale",
+    }),
+  });
+  await approvalStarted.promise;
+  adapter.releaseSubagentBindings(agent.id, "thread-1");
+  releaseApproval("allowed-once");
+  await stale;
+
+  assert.equal(interactions.resolved.some(entry => entry.id === "stale-child-approval"), false);
+  assert.equal(interactions.rejected.at(-1).error.code, "CODEX_STALE_APPROVAL");
+
+  assert.equal(adapter.observeSubagentActivity(notification("item/started", "thread-1", "turn-1", {
+    item: {
+      type: "subAgentActivity",
+      id: "restore-child",
+      agentThreadId: "thread-child",
+      kind: "started",
+    },
+  })), true);
+  const otherAgent = fakeAgent({ id: "dsh-2" });
+  adapter.attachAgent(otherAgent);
+  adapter.bindImportedThread(otherAgent.id, "thread-other", { cwd: otherAgent.session.header.cwd });
+  adapter.activeRootTurns.set("thread-other", 1);
+  assert.equal(adapter.observeSubagentActivity(notification("item/started", "thread-other", "turn-other", {
+    item: {
+      type: "subAgentActivity",
+      id: "cross-session-child",
+      agentThreadId: "thread-child",
+      kind: "started",
+    },
+  })), false);
+  await handleCodexServerRequest(ctx, {
+    adapter,
+    runtime: interactions,
+    request: request("reject-cross-session-observation", "item/dynamicTool/call", {
+      threadId: "thread-child",
+      namespace: "dsh",
+      name: "read",
+      arguments: { file_path: "subagent-fixture/child-oracle.txt" },
+    }),
+  });
+  assert.equal(calls.length, 2);
+  assert.match(interactions.rejected.at(-1).error.message, /no owning live DSH Session/);
+  adapter.activeRootTurns.delete("thread-other");
+  adapter.detachAgent(otherAgent.id);
+
+  runtime.finishTurn.resolve();
+  await stream;
+  assert.equal(adapter.activeRootTurns.has("thread-1"), false);
+  await handleCodexServerRequest(ctx, {
+    adapter,
+    runtime: interactions,
+    request: request("after-root-turn", "item/dynamicTool/call", {
+      threadId: "thread-child",
+      namespace: "dsh",
+      name: "read",
+      arguments: { file_path: "subagent-fixture/child-oracle.txt" },
+    }),
+  });
+  assert.equal(calls.length, 2);
+  assert.match(interactions.rejected.at(-1).error.message, /no owning live DSH Session/);
+});
+
 test("Relay exposes only the executable Codex app workspace dependency tool", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "relay-codex-runtime-"));
   const previousRuntimeRoot = process.env.CODEX_PRIMARY_RUNTIME_ROOT;
@@ -1253,7 +1979,7 @@ test("Relay exposes only the executable Codex app workspace dependency tool", as
   assert.deepEqual(codexAppNamespace.tools.map(tool => tool.name), ["load_workspace_dependencies"]);
 
   const agent = fakeAgent();
-  const adapter = { dshSessionForThread: threadId => threadId === "thread-1" ? agent.id : null };
+  const adapter = { dshSessionForInteractionThread: threadId => threadId === "thread-1" ? agent.id : null };
   const ctx = {
     agents: { get: id => id === agent.id ? agent : null },
     approval: { async request() { throw new Error("unexpected approval"); } },
@@ -1271,9 +1997,10 @@ test("Relay exposes only the executable Codex app workspace dependency tool", as
     }),
   });
   assert.equal(runtime.dynamic.at(-1).success, true);
-  assert.match(runtime.dynamic.at(-1).text, /Bundle version: `99\.test`/);
-  assert.match(runtime.dynamic.at(-1).text, /Node\.js executable: `.*dependencies\/node\/bin\/node`/);
-  assert.match(runtime.dynamic.at(-1).text, /Python executable: `.*dependencies\/python\/bin\/python3`/);
+  const dependencyText = runtime.dynamic.at(-1).text.replaceAll("\\", "/");
+  assert.match(dependencyText, /Bundle version: `99\.test`/);
+  assert.match(dependencyText, /Node\.js executable: `.*dependencies\/node\/bin\/node`/);
+  assert.match(dependencyText, /Python executable: `.*dependencies\/python\/bin\/python3`/);
 
   await handleCodexServerRequest(ctx, {
     adapter,
@@ -1337,6 +2064,9 @@ class FakeRuntime extends EventEmitter {
       this.emit("activity", notification("item/started", threadId, turnId, {
         item: { type: "reasoning", id: "reason-1", summary: [], content: [] },
       }));
+      this.emit("activity", notification("item/reasoning/summaryPartAdded", threadId, turnId, {
+        itemId: "reason-1", summaryIndex: 0,
+      }));
       this.emit("activity", notification("item/reasoning/summaryTextDelta", threadId, turnId, {
         itemId: "reason-1", summaryIndex: 0, delta: "Checked the workspace.",
       }));
@@ -1368,6 +2098,242 @@ class FakeRuntime extends EventEmitter {
   }
 }
 
+class SubagentActivityRuntime extends FakeRuntime {
+  constructor() {
+    super();
+    this.activityObserved = Promise.withResolvers();
+    this.finishTurn = Promise.withResolvers();
+  }
+
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-1";
+    queueMicrotask(async () => {
+      this.emit("activity", notification("item/started", threadId, turnId, {
+        item: {
+          type: "subAgentActivity",
+          id: "spawn-child",
+          agentThreadId: "thread-child",
+          kind: "started",
+        },
+      }));
+      this.emit("activity", notification("item/started", "thread-child", "turn-child", {
+        item: {
+          type: "subAgentActivity",
+          id: "spawn-grandchild",
+          agentThreadId: "thread-grandchild",
+          kind: "started",
+        },
+      }));
+      this.activityObserved.resolve();
+      await this.finishTurn.promise;
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "agentMessage", id: "answer-1", text: "done", phase: "final_answer" },
+      }));
+      this.emit("activity", {
+        method: "turn/completed",
+        params: {
+          threadId,
+          turn: { id: turnId, status: "completed", error: null, items: [] },
+        },
+      });
+    });
+    return { id: turnId, status: "inProgress", items: [] };
+  }
+}
+
+class EmptyReasoningRuntime extends FakeRuntime {
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-empty-reasoning";
+    queueMicrotask(() => {
+      this.emit("activity", notification("item/started", threadId, turnId, {
+        item: { type: "reasoning", id: "reason-empty", summary: [], content: [] },
+      }));
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "reasoning", id: "reason-empty", summary: [], content: [] },
+      }));
+      this.emit("activity", notification("item/agentMessage/delta", threadId, turnId, {
+        itemId: "answer-empty-reasoning", delta: "done",
+      }));
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "agentMessage", id: "answer-empty-reasoning", text: "done", phase: "final_answer" },
+      }));
+      this.emit("activity", { method: "turn/completed", params: {
+        threadId,
+        turn: { id: turnId, status: "completed", error: null, items: [] },
+      } });
+    });
+    return { id: turnId, status: "inProgress", items: [] };
+  }
+}
+
+class StreamingCommandRuntime extends FakeRuntime {
+  constructor() {
+    super();
+    this.commandCompleted = false;
+  }
+
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-streaming-command";
+    queueMicrotask(() => {
+      this.emit("activity", notification("item/started", threadId, turnId, {
+        item: {
+          type: "commandExecution",
+          id: "command-streaming",
+          processId: "4102",
+          command: "printf first; sleep; printf last",
+          status: "inProgress",
+        },
+      }));
+      this.emit("activity", notification("item/codeModeShell/outputDelta", threadId, turnId, {
+        processId: "4102",
+        delta: "STREAM_FIRST_4102\n",
+      }));
+      this.emit("activity", notification("item/commandExecution/outputDelta", threadId, turnId, {
+        itemId: "command-streaming",
+        delta: "REPEATED_LINE\n",
+      }));
+      this.emit("activity", notification("item/commandExecution/outputDelta", threadId, turnId, {
+        itemId: "command-streaming",
+        delta: "REPEATED_LINE\n",
+      }));
+      setTimeout(() => {
+        this.emit("activity", notification("item/commandExecution/outputDelta", threadId, turnId, {
+          itemId: "command-streaming",
+          delta: "STREAM_LAST_8604\n",
+        }));
+        this.commandCompleted = true;
+        const command = {
+          type: "commandExecution",
+          id: "command-streaming",
+          processId: "4102",
+          command: "printf first; sleep; printf last",
+          status: "completed",
+          exitCode: 0,
+          aggregatedOutput: "STREAM_LAST_8604\n",
+        };
+        this.emit("activity", notification("item/completed", threadId, turnId, { item: command }));
+        this.emit("activity", notification("item/agentMessage/delta", threadId, turnId, {
+          itemId: "answer-streaming-command",
+          delta: "done",
+        }));
+        const answer = {
+          type: "agentMessage",
+          id: "answer-streaming-command",
+          text: "done",
+          phase: "final_answer",
+        };
+        this.emit("activity", notification("item/completed", threadId, turnId, { item: answer }));
+        this.emit("activity", {
+          method: "turn/completed",
+          params: {
+            threadId,
+            turn: { id: turnId, status: "completed", error: null, items: [command, answer] },
+          },
+        });
+      }, 30);
+    });
+    return { id: turnId, status: "inProgress", items: [] };
+  }
+}
+
+class CommandCompletionRuntime extends FakeRuntime {
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-command-completion";
+    queueMicrotask(() => {
+      const completionOnly = {
+        type: "commandExecution",
+        id: "command-completion-only",
+        command: "printf completion-only",
+        status: "completed",
+        exitCode: 0,
+        aggregatedOutput: "COMPLETION_ONLY\n",
+      };
+      this.emit("activity", notification("item/completed", threadId, turnId, { item: completionOnly }));
+
+      const empty = {
+        type: "commandExecution",
+        id: "command-empty",
+        command: "true",
+        status: "completed",
+        exitCode: 0,
+        aggregatedOutput: "",
+      };
+      this.emit("activity", notification("item/completed", threadId, turnId, { item: empty }));
+
+      this.emit("activity", notification("item/started", threadId, turnId, {
+        item: {
+          type: "commandExecution",
+          id: "command-cross-source-duplicate",
+          processId: "duplicate-process",
+          command: "printf same",
+          status: "inProgress",
+        },
+      }));
+      this.emit("activity", notification("item/codeModeShell/outputDelta", threadId, turnId, {
+        processId: "duplicate-process",
+        delta: "CROSS_SOURCE_SAME\n",
+      }));
+      this.emit("activity", notification("item/commandExecution/outputDelta", threadId, turnId, {
+        itemId: "command-cross-source-duplicate",
+        delta: "CROSS_SOURCE_SAME\n",
+      }));
+      const duplicate = {
+        type: "commandExecution",
+        id: "command-cross-source-duplicate",
+        processId: "duplicate-process",
+        command: "printf same",
+        status: "completed",
+        exitCode: 0,
+        aggregatedOutput: "CROSS_SOURCE_SAME\n",
+      };
+      this.emit("activity", notification("item/completed", threadId, turnId, { item: duplicate }));
+
+      this.emit("activity", notification("item/commandExecution/outputDelta", threadId, turnId, {
+        itemId: "command-reconciled",
+        delta: "STALE_PARTIAL",
+      }));
+      const reconciled = {
+        type: "commandExecution",
+        id: "command-reconciled",
+        command: "replace output",
+        status: "completed",
+        exitCode: 0,
+        aggregatedOutput: "AUTHORITATIVE_FINAL\n",
+      };
+      this.emit("activity", notification("item/completed", threadId, turnId, { item: reconciled }));
+      this.emit("activity", notification("item/commandExecution/outputDelta", threadId, turnId, {
+        itemId: "command-reconciled",
+        delta: "LATE_DELTA",
+      }));
+
+      const answer = {
+        type: "agentMessage",
+        id: "answer-command-completion",
+        text: "done",
+        phase: "final_answer",
+      };
+      this.emit("activity", notification("item/completed", threadId, turnId, { item: answer }));
+      this.emit("activity", {
+        method: "turn/completed",
+        params: {
+          threadId,
+          turn: {
+            id: turnId,
+            status: "completed",
+            error: null,
+            items: [completionOnly, empty, duplicate, reconciled, answer],
+          },
+        },
+      });
+    });
+    return { id: turnId, status: "inProgress", items: [] };
+  }
+}
+
 class ImageHistoryRuntime extends FakeRuntime {
   constructor(imagePath) {
     super();
@@ -1388,6 +2354,32 @@ class ImageHistoryRuntime extends FakeRuntime {
         threadId,
         turn: { id: turnId, status: "completed", error: null, items: [] },
       } });
+    });
+    return { id: turnId, status: "inProgress", items: [] };
+  }
+}
+
+class McpImageRuntime extends FakeRuntime {
+  constructor(item) {
+    super();
+    this.item = item;
+  }
+
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-mcp-image";
+    queueMicrotask(() => {
+      this.emit("activity", notification("item/completed", threadId, turnId, { item: this.item }));
+      this.emit("activity", notification("item/completed", threadId, turnId, {
+        item: { type: "agentMessage", id: "mcp-image-answer", text: "MCP_IMAGE_SEEN", phase: "final_answer" },
+      }));
+      this.emit("activity", {
+        method: "turn/completed",
+        params: {
+          threadId,
+          turn: { id: turnId, status: "completed", error: null, items: [this.item] },
+        },
+      });
     });
     return { id: turnId, status: "inProgress", items: [] };
   }
@@ -1443,14 +2435,14 @@ class InteractionRuntime {
   rejectRequest(id, error) { this.rejected.push({ id, error }); }
 }
 
-function fakeAgent({ id = "dsh-1", tools = null } = {}) {
+function fakeAgent({ id = "dsh-1", tools = null, cwd = "/workspace/relay" } = {}) {
   const appended = [];
   return {
     id,
     appended,
     ctx: tools ? { tools } : {},
     session: {
-      header: { agentPreset: "relay-codex", cwd: "/workspace/relay" },
+      header: { agentPreset: "relay-codex", cwd },
       events: [],
       append(type, data) { appended.push({ type, data }); },
     },
@@ -1483,6 +2475,13 @@ function skillCatalogMessage(name, description, update = false) {
 
 function notification(method, threadId, turnId, rest) {
   return { method, params: { threadId, turnId, ...rest } };
+}
+
+function pngFixture(label) {
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(label),
+  ]);
 }
 
 function request(id, method, params) {

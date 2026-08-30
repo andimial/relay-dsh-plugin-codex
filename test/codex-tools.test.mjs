@@ -30,7 +30,7 @@ test("reserved DSH MCP tool names are safely exposed and routed to their origina
     },
   };
   const adapter = {
-    dshSessionForThread: threadId => threadId === "thread-1" ? agent.id : null,
+    dshSessionForInteractionThread: threadId => threadId === "thread-1" ? agent.id : null,
     dshToolName: (sessionId, name) => sessionId === agent.id && name === exposedName ? originalName : null,
   };
   const runtime = {

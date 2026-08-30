@@ -1,13 +1,54 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CodexAppServerClient, NATIVE_CODEX_APP_SERVER_ARGS } from "../app-server-client.mjs";
+import { CodexAppServerClient, RELAY_CODEX_APP_SERVER_ARGS } from "../app-server-client.mjs";
 
-test("default App Server launch arguments match native Codex Desktop", () => {
+test("default App Server launch disables persistent shell environment snapshots", () => {
   const client = new CodexAppServerClient();
-  assert.deepEqual(client.appServerArgs, NATIVE_CODEX_APP_SERVER_ARGS);
+  assert.deepEqual(client.appServerArgs, RELAY_CODEX_APP_SERVER_ARGS);
+  assert.deepEqual(client.appServerArgs, [
+    "-c",
+    "features.code_mode_host=true",
+    "-c",
+    "features.shell_snapshot=false",
+    "app-server",
+    "--analytics-default-enabled",
+  ]);
   assert.equal(client.command, process.execPath);
   assert.equal(client.commandSource, "bundled");
+  assert.equal(client.bypassHookTrust, false);
+});
+
+test("explicit App Server arguments remain an exact operator override", () => {
+  const args = ["-c", "features.shell_snapshot=true", "app-server"];
+  const client = new CodexAppServerClient({ args });
+  assert.deepEqual(client.appServerArgs, args);
+  assert.notEqual(client.appServerArgs, args);
+  assert.equal(client.bypassHookTrust, false);
+});
+
+test("the exact Hook trust bypass flag is propagated without rewriting launch arguments", () => {
+  const args = [
+    "-c",
+    "features.shell_snapshot=false",
+    "--dangerously-bypass-hook-trust",
+    "app-server",
+  ];
+  const client = new CodexAppServerClient({ args });
+
+  assert.deepEqual(client.appServerArgs, args);
+  assert.equal(client.bypassHookTrust, true);
+});
+
+test("Hook trust bypass text embedded in another argument does not enable the override", () => {
+  const args = [
+    "-c",
+    "operator_note=--dangerously-bypass-hook-trust",
+    "app-server",
+  ];
+  const client = new CodexAppServerClient({ args });
+
+  assert.equal(client.bypassHookTrust, false);
 });
 
 test("a missing Codex executable reports an actionable configuration error", async () => {
@@ -120,6 +161,7 @@ test("initialization advertises native Codex Desktop capabilities by default", a
     "  if (!capabilities.extensions?.['io.modelcontextprotocol/ui']?.mimeTypes?.includes('text/html+skybridge')) process.exit(11)",
     "  if (!capabilities.optOutNotificationMethods?.includes('codex/event/task_started')) process.exit(12)",
     "  if (capabilities.optOutNotificationMethods?.includes('command/exec/outputDelta')) process.exit(13)",
+    "  if (capabilities.optOutNotificationMethods?.includes('rawResponseItem/completed')) process.exit(14)",
     "  process.stdout.write(JSON.stringify({ id: message.id, result: { userAgent: 'fixture' } }) + '\\n')",
     "})",
   ].join("\n");

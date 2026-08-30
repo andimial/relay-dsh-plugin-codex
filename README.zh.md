@@ -6,7 +6,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/yangbobo2021/relay-dsh-plugin-codex?style=flat)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/stargazers)
 [![MIT 许可证](https://img.shields.io/github/license/yangbobo2021/relay-dsh-plugin-codex)](LICENSE)
 [![DSH 兼容版本](https://img.shields.io/badge/DSH-0.1.1--rc.2-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
-[![npm 来源证明](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.2)
+[![npm 来源证明](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.3)
 
 [English](README.md) | 中文
 
@@ -114,7 +114,7 @@ codex login
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@latest
 ```
 
-本文更新时，`latest` 指向稳定版 `0.1.2`。最新版本请以链接中的 npm 页面
+本文更新时，`latest` 指向稳定版 `0.1.3`。最新版本请以链接中的 npm 页面
 为准。
 
 #### npm 预发布版（DSH 预览阶段推荐）
@@ -127,7 +127,7 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-本文更新时，`next` 指向 `0.1.2-rc.1`。
+本文更新时，`next` 指向 `0.1.3`。
 
 #### GitHub 开发版
 
@@ -141,7 +141,7 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/rel
 SHA。例如：
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.2
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.3
 ```
 
 官方 DSH CLI 会在需要时初始化 `web` Profile，通过 `pnpm` 安装所选软件包，
@@ -173,14 +173,18 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 web
 
 ### 5. 导入 Workspace 中已有的 Codex 会话
 
-1. 在 DSH 中打开目标 Workspace 或其中任一 Session。
-2. 点击 Workspace 列表下方、Settings 上方的 **导入 Codex 会话**。
-3. 查看汇总扫描结果，然后点击 **全部导入**。
-4. 确认导入的 Session 已直接显示 Codex 标题并按源活动时间排列，然后打开
+1. 点击 Workspace 列表下方、Settings 上方的紧凑 Codex 导入图标。
+2. 在弹窗中确认或切换可见的 **目标 Workspace**，然后点击 **扫描会话**。
+   当前 Session 所属 Workspace 或最近 Workspace 只作为初始选项；确认前不会开始扫描。
+3. 查看每个可导入 Codex Thread 的完整 ID、标题、源路径、最后活动时间以及
+   “可导入”或“待恢复”状态，并勾选一个、多个或全部 Thread。
+4. 点击 **导入所选会话**。
+5. 确认导入的 Session 已直接显示 Codex 标题并按源活动时间排列，然后打开
    任一 Session 继续对话。
 
-首版按整个 Workspace 导入，不提供逐 Thread 勾选。标题和最后活动时间在打开
-Session 前就必须可用；批量导入时间不会覆盖 Codex inventory 的
+列表只显示精确属于用户所选 Workspace 的可导入 Thread；已绑定 Thread 和其他
+Workspace 的 Thread 不可选择。标题和最后活动时间在打开 Session 前就必须可用；
+批量导入时间不会覆盖 Codex inventory 的
 `thread/list.updatedAt` 顺序。Codex App Server 继续负责
 模型上下文、工具状态和压缩；DSH 只保存原生用户/助手展示历史以及一对一绑定，
 不会复制 Codex 私有运行记录。每次打开已导入的 Session 时，插件会读取一次对应
@@ -194,6 +198,7 @@ Session 前就必须可用；批量导入时间不会覆盖 Codex inventory 的
 - 每个 DSH Session 持续绑定一个 Codex App Server Thread
 - 模型和 reasoning effort 选择
 - 在 DSH 原生对话中流式显示回答和 reasoning
+- 在新建 Session 中实时显示长时间运行的 Codex Shell 命令输出，并保留在 DSH 历史中
 - DSH 原生审批和用户提问流程
 - 图片、中断和会话延续
 - 在 Codex App Server 的 `dsh` namespace 中提供通用 DSH 工具
@@ -226,8 +231,9 @@ fork 通过 Codex App Server 的 `thread/fork` 实现。子 DSH Session 会提�
 Codex Thread、Turn、Item、request 和绑定代次；任何不匹配都会拒绝旧 approval，
 并保留可诊断的来源信息。
 
-完整约束见[可靠性规范](docs/reliability-spec.md)与
-[可执行验收矩阵](docs/reliability-acceptance.md)。
+完整约束见[可靠性规范](docs/reliability-spec.md)、
+[可执行验收矩阵](docs/reliability-acceptance.md)以及审批与结构化提问的
+[DSH 交互桥接规范](docs/spec/dsh-interaction-bridge.md)。
 
 ## 插件边界及与 Relay 的关系
 

@@ -6,7 +6,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/yangbobo2021/relay-dsh-plugin-codex?style=flat)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/stargazers)
 [![MIT license](https://img.shields.io/github/license/yangbobo2021/relay-dsh-plugin-codex)](LICENSE)
 [![DSH compatibility](https://img.shields.io/badge/DSH-0.1.1--rc.2-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
-[![npm provenance](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.2)
+[![npm provenance](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.3)
 
 English | [中文](README.zh.md)
 
@@ -120,7 +120,7 @@ Use `@latest` to install the current stable release:
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@latest
 ```
 
-At the time of writing, `latest` resolves to stable version `0.1.2`. The linked
+At the time of writing, `latest` resolves to stable version `0.1.3`. The linked
 npm page is the source of truth for the current version.
 
 #### npm prerelease (recommended during DSH preview)
@@ -134,7 +134,7 @@ on a global `codex` executable:
 npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-At the time of writing, `next` resolves to `0.1.2-rc.1`.
+At the time of writing, `next` resolves to `0.1.3`.
 
 #### GitHub development build
 
@@ -148,7 +148,7 @@ npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/rel
 full Commit SHA instead. For example:
 
 ```bash
-npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.2
+npx @deepseek-ai/dsh@0.1.1-rc.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.3
 ```
 
 The official DSH CLI initializes the `web` Profile if it does not exist, asks
@@ -182,15 +182,20 @@ activates the bundle and registers the managed **Codex** mode automatically.
 
 ### 5. Import existing Codex sessions for a Workspace
 
-1. Open the target Workspace or one of its Sessions in DSH.
-2. Select **Import Codex Sessions** below the Workspace list and above Settings.
-3. Review the aggregate scan counts, then select **Import all**.
-4. Confirm that imported rows already show their Codex titles and source activity
+1. Select the compact Codex import icon below the Workspace list and above Settings.
+2. In the dialog, confirm or change the visible **Target Workspace**, then select
+   **Scan sessions**. The current Session owner or recent Workspace is only the
+   initial selection; scanning never starts before this confirmation.
+3. Review each eligible Codex Thread's full ID, title, source path, last activity,
+   and ready or recoverable status. Select one, several, or all Threads.
+4. Select **Import selected**.
+5. Confirm that imported rows already show their Codex titles and source activity
    order, then open any Session and continue chatting.
 
-This release imports the whole Workspace and does not offer per-Thread selection.
-Titles and recency are available before a Session is opened; batch execution time
-does not replace the Codex inventory `thread/list.updatedAt` order.
+Only eligible Threads from the explicitly selected Workspace are shown. Already-bound
+Threads and Threads from another Workspace cannot be selected. Titles and recency
+are available before a Session is opened; batch execution time does not replace
+the Codex inventory `thread/list.updatedAt` order.
 Codex App Server remains authoritative for model context, tool state, and
 compaction. DSH stores native user/assistant presentation history and the durable
 one-to-one binding; it does not copy private Codex runtime records. Each time an
@@ -206,6 +211,7 @@ manual refresh action.
 - One persistent Codex App Server Thread per DSH Session
 - Model and reasoning-effort selection
 - Streaming answers and reasoning in the native DSH conversation
+- Live output from long-running Codex shell commands in newly created Sessions, retained in DSH history
 - DSH approval and user-question flows
 - Images, interruption, and continuation
 - Generic DSH tools exposed under the Codex App Server `dsh` namespace
@@ -244,7 +250,9 @@ generation still match after reconnect; otherwise it is rejected with
 diagnostic provenance.
 
 See the [reliability specification](docs/reliability-spec.md) and
-[executable acceptance matrix](docs/reliability-acceptance.md).
+[executable acceptance matrix](docs/reliability-acceptance.md). Approval and
+structured-question composition is defined by the
+[DSH interaction bridge specification](docs/spec/dsh-interaction-bridge.md).
 
 ## Plugin Boundary and Relay
 
