@@ -828,7 +828,8 @@ function codexReplayTurnIds(session) {
   const result = new Set();
   for (const message of session.deriveMessages()) {
     if (message.role !== "assistant" || message.source?.kind !== "model") continue;
-    const turnId = message.source.replayState?.turnId;
+    const replay = message.source.replayState?.response ?? message.source.replayState;
+    const turnId = replay?.turnId;
     if (typeof turnId === "string" && turnId) result.add(turnId);
   }
   return result;

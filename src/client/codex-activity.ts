@@ -12,6 +12,8 @@ export interface CodexActivityData {
   readonly summary?: string
   readonly input?: string
   readonly output?: string
+  readonly exitCode?: string
+  readonly commandActions?: string
   readonly provenance?: {
     readonly threadId: string
     readonly turnId: string
