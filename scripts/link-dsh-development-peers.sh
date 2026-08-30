@@ -20,7 +20,7 @@ peers=(
   cordis dsh-api-remotes dsh-client-connection dsh-client-locale
   dsh-client-runtime dsh-client-ui-conversation dsh-client-ui-primitives
   dsh-client-ui-settings dsh-client-ui-sidebar dsh-client-ui-slots dsh-client-ui-theme dsh-llm
-  dsh-session dsh-tools dsh-typert-protocol
+  dsh-session dsh-session-persistence-jsonl dsh-client-ui-tool dsh-tools dsh-typert-protocol
 )
 
 mkdir -p "$target_root"

@@ -29,10 +29,10 @@
     "./typert": "./lib/typert.host.js",
     "./package.json": "./package.json"
   },
-  "files": ["README.zh.md", "docs/images", "docs/reliability-spec.md", "docs/reliability-acceptance.md", "docs/spec/dsh-interaction-bridge.md", "cordis.patch.yml", "presets", "lib/client.js", "lib/client.js.map", "lib/host-plugin.js", "lib/host-plugin.js.map", "lib/typert.host.js", "lib/typert.host.js.map"],
+  "files": ["README.zh.md", "docs/images", "docs/reliability-spec.md", "docs/reliability-acceptance.md", "docs/spec/dsh-interaction-bridge.md", "docs/spec/execution-presentation.md", "scripts/repair-activity-history.mjs", "codex-activity-wire.mjs", "cordis.patch.yml", "presets", "lib/client.js", "lib/client.js.map", "lib/host-plugin.js", "lib/host-plugin.js.map", "lib/typert.host.js", "lib/typert.host.js.map"],
   "dsh": {
     "client": {
-      "inject": ["@deepseek-ai/dsh-client-connection", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-sidebar", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-theme", "relay-dsh-plugin-session-import"],
+      "inject": ["@deepseek-ai/dsh-client-connection", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-tool", "@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-sidebar", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-theme", "relay-dsh-plugin-session-import"],
       "platform": "web"
     },
     "bundle": { "patch": "./cordis.patch.yml" }
@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "@openai/codex": "0.149.0",
+    "lucide-react": "^1.37.0",
     "relay-dsh-plugin-session-import": "^0.1.0"
   },
   "devDependencies": { "@testing-library/react": "^16.3.2", "@types/react": "~18.3.1", "@types/react-dom": "^18.3.7", "jsdom": "^29.1.1", "lightningcss": "1.32.0", "react": "^18.2.0", "react-dom": "^18.3.1", "tsdown": "0.22.2", "typescript": "6.0.3", "vitest": "^4.1.8" }

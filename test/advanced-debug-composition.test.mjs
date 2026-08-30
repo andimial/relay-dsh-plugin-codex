@@ -12,6 +12,11 @@ test("advanced debugging stays additive to DSH's native conversation", () => {
   assert.match(clientSource, /conversation\.session\.header\.utilities/);
   assert.match(clientSource, /id: 'session-log-download'/);
   assert.match(clientSource, /priority: -100/);
+  assert.match(clientSource, /conversationEvents\.register\(codexActivityDefinition\)/);
+  assert.match(clientSource, /key: 'relay-codex-activity'/);
+  assert.match(clientSource, /'conversationEvents'/);
+  assert.match(clientSource, /name: 'tool\.call\.toolview'/);
+  assert.match(clientSource, /key: CODEX_ACTIVITY_TOOL/);
 
   assert.doesNotMatch(clientSource, /name: 'conversation\.view'/);
   assert.doesNotMatch(clientSource, /name: 'conversation\.session'/);

@@ -69,6 +69,64 @@ to DSH questions, waits for `userQuestions.ask()`, and maps selected and custom
 answers back to App Server. Cancellation or provider failure rejects the
 pending request. Unsupported interaction methods are rejected.
 
+## Activity presentation contract
+
+Official DSH conversation rendering remains unmodified. New Codex runtime
+activities use the official `assistant/message` (tool-call block), `tool/call`,
+and `tool/result` envelopes with the plugin-owned tool name
+`relay_codex_activity`. Versioned activity data travels in call arguments and
+result `meta.codexActivity`. The plugin renders that name through the official
+`tool.call.toolview` slot. This records work executed by Codex; it does not
+register or dispatch an additional DSH tool. Calls have matching result messages,
+carry the current DSH Turn/Step, and use Thread/Turn/Item-scoped call IDs.
+
+Compatibility was checked against official DSH commit
+`b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`. Its persistence reader refuses unknown
+event types unless `ignorable: true` is on the envelope, but its public
+`Session.append()` does not accept that marker. Type declaration merging and
+client conversation registration do not extend the persistence vocabulary.
+New writes MUST NOT use `relay-codex/activity` or patch the official registry.
+
+The legacy `relay-codex-activity` chat node remains read-only compatibility for
+old logs. `scripts/repair-activity-history.mjs` defaults to dry-run; with DSH
+stopped, `--write` backs up the original bytes and atomically adds only the
+`ignorable: true` envelope marker to validated legacy activity events. It preserves
+all sequence numbers, timestamps, payloads, and other records, handles every zstd
+frame (with a separate header frame), is idempotent, and refuses malformed or
+torn input. No other unknown event is made ignorable. Backups stay beside the
+private session log, outside the repository.
+
+Recovery must audit the complete configured session root without a modification
+date or workspace filter. `--root <sessions-directory>` discovers canonical
+plaintext/zstd logs across workspaces, excluding backups and symlinks. Batch
+repair refuses to write if any log could not be inspected and rescans the root
+after applying fixes; acceptance requires no unmarked legacy activity events
+and no scan errors. Fixing only the first reported Session is not sufficient.
+
+Assistant-facing text and reasoning keep using DSH's native text and reasoning
+blocks. Command output, file changes, image views/generations, MCP tool calls,
+web searches, plans, and future non-message App Server items must not be
+serialized into assistant markdown. The adapter must append one started activity
+when an item starts and one completed activity when it settles. Unsettled calls
+are closed as failures when the stream terminates. Completed command
+activities carry bounded output in their event payload so the UI can show it in
+an expandable shell/detail panel without changing the assistant message body.
+Command activity labels distinguish running from completed work, prefer Codex's
+structured command actions (read/search/list), and retain the full command only
+in expandable details. Consecutive activities are grouped in presentation; naming
+each individual call `Ran commands` is not grouping. See
+[Execution presentation acceptance](execution-presentation.md).
+
+When App Server exposes duplicate command output through both legacy
+`codeModeShell/outputDelta` and modern `commandExecution/outputDelta`
+notifications, the adapter keeps a single reconciled activity output. Late
+output deltas after item completion are ignored.
+
+Unknown App Server item types that are not user, assistant, or reasoning items
+must also become activity rows. This fail-open-for-presentation rule prevents new
+Codex tool surfaces from falling back into MarkdownText while preserving DSH as
+the owner of conversation layout.
+
 ## Verification contract
 
 1. A unit contract test fails when either required Host injection is absent.
@@ -90,3 +148,21 @@ pending request. Unsupported interaction methods are rejected.
    and assert rejected trees execute zero DSH tools. An official DSH Web regression
    proves one child reads the exact oracle through the DSH tool bridge and returns it
    to the owning parent without a parent-side read.
+7. Codex adapter tests prove command output, mixed file/image/MCP/search items,
+   duplicate legacy/native command streams, empty outputs, and late deltas are
+   emitted as bounded native tool events and never as assistant text deltas.
+8. Codex client tests prove the plugin registers the activity conversation
+   definition for legacy reads, injects the native keyed tool view, and renders collapsed
+   activity rows plus expandable shell/details without markdown interpretation.
+9. Real official JSONL persistence tests cover both plaintext and zstd: stream a
+   tool through the adapter, persist it, dispose the writer, load using a fresh
+   reader, and reopen twice. Assert exact event preservation, known event types,
+   call/result pairing, coordinates, output, and final assistant text.
+10. Legacy repair tests reproduce `SessionFormatUnsupportedError` before repair,
+    verify exact backup bytes, then cold-load through official persistence.
+    Verify dry-run, idempotence, malformed/torn refusal, and unchanged unrelated
+    unknown events. Component tests cover native running-to-settled updates,
+    result-only history pages, interruption, and malformed payload fallback.
+11. Root scan tests include an old-dated log, multiple workspaces, both physical
+    encodings, an already repaired log, backups, symlinks, and corrupt input.
+    No date or workspace selection may omit an affected canonical log.
