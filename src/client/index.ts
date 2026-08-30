@@ -1,8 +1,8 @@
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type { ChatNodeOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { SidebarFooterActionOwnerProps } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { AdvancedDebugPreference } from '../../advanced-debug-preference.mjs'
 import { installModelSelection, type ModelSelectionContext } from '../../model-selection.mjs'
 import {
@@ -11,7 +11,8 @@ import {
   type AdvancedDebugInjected,
 } from './AdvancedDebug.tsx'
 import { en, zh, type CodexLocaleKey } from './locales.ts'
-import { WorkspaceImportAction, type WorkspaceImportInjected } from './WorkspaceImportAction.tsx'
+import { WorkspaceImportProvider, type WorkspaceImportInjected } from './WorkspaceImportAction.tsx'
+import type { SessionImportProviderSlotDefinition } from 'relay-dsh-plugin-session-import/contracts'
 import { CodexStatusBadge } from './CodexStatus.tsx'
 import {
   importCodexWorkspace,
@@ -20,7 +21,15 @@ import {
 } from './workspace-import-client.mjs'
 import { observeSessionOpen, syncOpenedCodexSessionAndRefresh } from './session-open-sync.mjs'
 
+type DshSlotContractAnchors =
+  | ChatNodeOwnerProps
+  | SettingsSectionOwnerProps
+  | SidebarFooterActionOwnerProps
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap {
+    'relay.session-import.provider': SessionImportProviderSlotDefinition
+  }
   interface LocaleNamespaceMap {
     'relay.codex': CodexLocaleKey
   }
@@ -76,13 +85,13 @@ function applyWorkspaceImport(ctx: ClientContext): void {
       ctx.workspaces as typeof ctx.workspaces & { refresh(): Promise<void> },
     ),
   })
-  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
-    name: 'sidebar.footer.action',
-    id: 'relay-codex-workspace-import',
-    order: -10,
+  ctx.slots.inject('relay.session-import.provider', () => ctx.slots.register({
+    name: 'relay.session-import.provider',
+    id: 'codex',
+    order: 10,
     inject: injected,
     locale: 'relay.codex',
-  }, WorkspaceImportAction))
+  }, WorkspaceImportProvider))
 }
 
 function applyAdvancedDebug(ctx: ClientContext): void {

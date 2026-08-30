@@ -1,16 +1,14 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Button,
   IconCodeOutline16,
   Modal,
-  Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   InjectFace,
   PropsLocale,
-  PropsRuntime,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type { SessionImportProviderOwnerProps } from 'relay-dsh-plugin-session-import/contracts'
 import { resolveImportWorkspace } from './workspace-import-client.mjs'
 import {
   workspaceImportUpdatedAtDate,
@@ -86,14 +84,14 @@ export interface WorkspaceImportInjected {
   refreshWorkspaceState: () => Promise<void>
 }
 
-type Props = PropsRuntime<'sidebar.footer.action'>
+type Props = SessionImportProviderOwnerProps
   & InjectFace<WorkspaceImportInjected>
   & PropsLocale<'relay.codex'>
 
 type Phase = 'idle' | 'no-workspace' | 'select-workspace' | 'scanning' | 'summary' | 'importing' | 'complete' | 'error'
 
-export function WorkspaceImportAction({
-  wide,
+export function WorkspaceImportProvider({
+  registerProvider,
   useWorkspaceImportWorkspaces,
   useWorkspaceImportSessions,
   scanWorkspace,
@@ -146,7 +144,7 @@ export function WorkspaceImportAction({
     )
   }
 
-  const begin = (): void => {
+  const begin = useCallback((): void => {
     const selected = availableTarget ?? workspaces.items[0] ?? null
     setTarget(selected)
     setOpen(true)
@@ -155,7 +153,15 @@ export function WorkspaceImportAction({
       return
     }
     setPhase('select-workspace')
-  }
+  }, [availableTarget, workspaces.items])
+
+  useEffect(() => registerProvider({
+    id: 'codex',
+    label: t('importAction'),
+    icon: <IconCodeOutline16 size={16} />,
+    order: 10,
+    open: begin,
+  }), [begin, registerProvider, t])
 
   const scanSelected = (): void => {
     if (target !== null) scan(target)
@@ -201,18 +207,6 @@ export function WorkspaceImportAction({
 
   return (
     <>
-      <Tooltip label={t('importAction')} side="top" delayMs={500}>
-        <button
-          type="button"
-          className={css.trigger}
-          aria-label={t('importAction')}
-          data-provider="codex"
-          data-compact={wide ? undefined : 'true'}
-          onClick={begin}
-        >
-          <IconCodeOutline16 size={wide ? 18 : 16} />
-        </button>
-      </Tooltip>
       <Modal
         open={open}
         onClose={close}

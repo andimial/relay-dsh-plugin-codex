@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const lock = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url), 'utf8'))
+
+test("Codex depends on and loads the neutral session import hub first", async () => {
+  assert.equal(manifest.dependencies["relay-dsh-plugin-session-import"], "^0.1.0");
+  assert.equal(lock.packages[''].dependencies['relay-dsh-plugin-session-import'], '^0.1.0')
+  assert.match(lock.packages['node_modules/relay-dsh-plugin-session-import'].integrity, /^sha512-/)
+  assert.ok(manifest.dsh.client.inject.includes("relay-dsh-plugin-session-import"));
+
+  const patch = await readFile(new URL("../cordis.patch.yml", import.meta.url), "utf8");
+  assert.match(patch, /id: relay-session-import-for-codex\s+name: 'relay-dsh-plugin-session-import'/);
+  assert.ok(patch.indexOf("relay-session-import-for-codex") < patch.indexOf("relay-codex-host"));
+
+  const linker = await readFile(new URL("../scripts/link-dsh-development-peers.sh", import.meta.url), "utf8");
+  assert.match(linker, /installed_session_import=.*node_modules\/relay-dsh-plugin-session-import/);
+  assert.match(linker, /elif \[\[ ! -f "\$installed_session_import\/package\.json" \]\]/);
+});
+
+test("Codex contributes a provider instead of a standalone footer trigger", async () => {
+  const source = await readFile(new URL("../src/client/index.ts", import.meta.url), "utf8");
+  assert.match(source, /ctx\.slots\.inject\('relay\.session-import\.provider'/);
+  assert.doesNotMatch(source, /id: 'relay-codex-workspace-import'/);
+
+  const css = await readFile(new URL("../src/client/WorkspaceImportAction.module.css", import.meta.url), "utf8");
+  assert.doesNotMatch(css, /\.trigger\s*\{/);
+});
