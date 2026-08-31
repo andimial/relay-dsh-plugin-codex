@@ -43,7 +43,7 @@ export function useCodexStatus(sessionId?: string, enabled = true): CodexConnect
 }
 
 export function CodexStatusBadge({ sessionId, useSessions, t }: CodexStatusBadgeProps): ReactNode {
-  const preset = useSessions(state => state.byId[sessionId]?.agentPreset)
+  const preset = useSessions(state => state.byId[sessionId]?.projectionValues?.agentPreset)
   const status = useCodexStatus(String(sessionId), preset === 'relay-codex')
   if (preset !== 'relay-codex' || status === null || status.state === 'connected') return null
   return (

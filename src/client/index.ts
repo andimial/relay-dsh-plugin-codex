@@ -1,6 +1,6 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type { ChatNodeOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { SidebarFooterActionOwnerProps } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { AdvancedDebugPreference } from '../../advanced-debug-preference.mjs'
@@ -40,7 +40,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const inject = ['slots', 'theme', 'locale', 'sessions', 'workspaces', 'connection', 'conversationEvents']
+export const inject = ['slots', 'theme', 'locale', 'sessions', 'workspaces', 'connection', 'uiConversation', 'modelDirectories']
 
 export function apply(ctx: ClientContext): () => void {
   applyActivityPresentation(ctx)
@@ -57,7 +57,7 @@ function applyActivityPresentation(ctx: ClientContext): void {
     name: 'tool.call.toolview',
     key: CODEX_ACTIVITY_TOOL,
   }, GroupedCodexToolActivityView))
-  ctx.conversationEvents.register(codexActivityDefinition)
+  ctx.uiConversation.events.register(codexActivityDefinition)
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'relay-codex-activity',
@@ -75,7 +75,10 @@ function applyConnectionStatus(ctx: ClientContext): void {
 
 function applySessionOpenSync(ctx: ClientContext): void {
   ctx.effect(() => observeSessionOpen(
-    ctx.sessions.currentProvideInfo,
+    {
+      getSnapshot: () => ({ sessionId: ctx.sessions.list.getSnapshot().current }),
+      subscribe: listener => ctx.sessions.list.subscribe(listener),
+    },
     (sessionId, isLatestSelection) => syncOpenedCodexSessionAndRefresh(
       sessionId,
       () => Promise.all([

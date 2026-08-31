@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { ChevronRight, ChevronDown, LoaderCircle, Brain, TriangleAlert } from 'lucide-react'
 import { MarkdownText, DisclosureRow } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ChatNodeOwnerProps, TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeOwnerProps, TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { describeActivity, summarizeActivities } from '../../codex-activity-labels.mjs'
 import { ActivityIcon, ActivityRow } from './CodexActivityView.tsx'
@@ -12,7 +12,7 @@ import css from './CodexProcessView.module.css'
 
 type ProcessProps = PropsRuntime<'conversation.chat.node', 'relay-codex-process'>
 type Item = { key: string; activities: CodexProcessSegment[] } | CodexProcessSegment
-const codeLabels = { copyLabel: 'Copy', copiedLabel: 'Copied' }
+const markdownLabels = { code: { copyLabel: 'Copy', copiedLabel: 'Copied' }, footnotes: 'Footnotes' }
 
 export function groupProcessSegments(segments: readonly CodexProcessSegment[]): Item[] {
   const items: Item[] = []
@@ -27,13 +27,15 @@ export function groupProcessSegments(segments: readonly CodexProcessSegment[]): 
   return items
 }
 
-export function CodexProcessView({ node, sessionId, renderMessageImages, useTurnData, useSession, openFile, fileMentions }: ProcessProps) {
+export function CodexProcessView({ node, sessionId, renderMessageImages, useTurnData, useChat, openFile, fileMentions, turnProcess }: ProcessProps) {
   // Legacy activity has no numeric turn in its payload. Its visible anchor still
   // proves an intervening native row; do not move grouped prose across that row.
-  const legacyBoundary = useSession(snapshot => [...snapshot.chat.nodes.values()].some(candidate =>
+  const legacyBoundary = useChat(snapshot => [...snapshot.nodes.values()].some(candidate =>
     candidate.kind === 'relay-codex-activity' && candidate.anchorSeq >= (node.data.firstVisibleSeq ?? Infinity)
       && candidate.anchorSeq <= (node.data.lastSeq ?? -1)))
-  const safe = canTakeOverCodexProcess(node.data) && !legacyBoundary
+  // Native compact mode controls the containing row. Yield ownership so its
+  // final assistant answer remains visible outside the folded process range.
+  const safe = canTakeOverCodexProcess(node.data) && !legacyBoundary && !turnProcess?.foldable
   useLayoutEffect(() => safe ? mountProcess(sessionId, node.data.turn) : undefined, [sessionId, node.data.turn, safe])
   const tail = useTurnData('turn-tail')
   const turn = node.location.kind === 'turn' || node.location.kind === 'step' ? node.location.turn : undefined
@@ -104,7 +106,7 @@ function ProcessItems({ segments, renderMessageImages, running, fileMentions, sh
     : item.kind === 'image' && item.attachment
       ? showImages ? <Fragment key={item.key}>{renderMessageImages({ images: [{ attachment: item.attachment }], align: 'start' })}</Fragment> : null
       : <div key={item.key} className={css.prose} data-codex-commentary={item.phase !== 'final_answer' || undefined}>
-          <MarkdownText text={item.text ?? ''} streaming={running && !item.settled} codeLabels={codeLabels} fileMentions={fileMentions} />
+          <MarkdownText text={item.text ?? ''} streaming={running && !item.settled} labels={markdownLabels} fileMentions={fileMentions} />
         </div>)
 }
 
@@ -144,6 +146,6 @@ function ReasoningSummary({ segments }: { segments: readonly CodexProcessSegment
   if (!text) return null
   return <DisclosureRow title="Thinking" icon={<Brain size={16} />} open={open} expandable expandOnRowClick
     onToggle={() => { setOpen(!open) }}>
-    <div className={css.reasoning}><MarkdownText text={text} codeLabels={codeLabels} /></div>
+    <div className={css.reasoning}><MarkdownText text={text} labels={markdownLabels} /></div>
   </DisclosureRow>
 }

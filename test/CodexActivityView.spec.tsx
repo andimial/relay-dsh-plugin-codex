@@ -6,9 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { CodexActivityData, CodexActivityEventData } from '../src/client/codex-activity.ts'
 
-vi.mock('@deepseek-ai/dsh-client-runtime/client', () => ({
-  conversationContextKey: vi.fn((kind: string, id: string) => `${kind.length}:${kind}${id}`),
-}))
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   DisclosureRow: ({ icon, title, open, expandable, onToggle, children, collapsedContent, titleClassName, rowClassName }: {
@@ -34,7 +31,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   StateDot: ({ state }: { state: string }) => <span data-testid="state-dot" data-state={state} />,
 }))
 
-import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'
+const conversationContextKey = (kind: string, id: string) => `${kind}:${id}`
 import { CodexActivityView, CodexToolActivityView, GroupedCodexToolActivityView } from '../src/client/CodexActivityView.tsx'
 import { initialCodexProcessState, type CodexProcessState } from '../src/client/codex-process.ts'
 import { mountProcess } from '../src/client/process-presence.ts'
@@ -205,7 +202,6 @@ describe('GroupedCodexToolActivityView', () => {
     const props = toolProps(nativeBlock(readActivity('running'), 'child'), process, 'step', 'root')
     render(<GroupedCodexToolActivityView {...props} />)
     expect(screen.getByRole('button', { name: 'Reading README.md' })).not.toBeNull()
-    expect(conversationContextKey).toHaveBeenCalledWith('tool-call', 'child')
   })
 
   it('keeps suppression until the last mounted process is removed', () => {
@@ -251,10 +247,10 @@ function representedProcess(callId = 'command'): CodexProcessState {
 
 function toolProps(block: ToolCallViewProps['block'], process?: CodexProcessState, kind = 'step', rootId = block.callId): ToolCallViewProps {
   const turn = { data: new Map([['relay-codex-process', process]]) }
-  const snapshot = { chat: { nodes: new Map([[conversationContextKey('tool-call', rootId), { location: { kind, turn } }]]) } }
+  const snapshot = { nodes: new Map([[conversationContextKey('tool-call', rootId), { kind: 'tool-call', id: rootId, location: { kind, turn } }]]) }
   return {
     sessionId: 'activity-session', callId: block.callId, toolName: 'relay_codex_activity', block,
-    openFile: vi.fn(), useSession: selector => selector(snapshot as never),
+    openFile: vi.fn(), useChat: selector => selector(snapshot as never),
   } as ToolCallViewProps
 }
 

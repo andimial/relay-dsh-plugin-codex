@@ -102,12 +102,12 @@ function modelHarness({
   codexReadyAfter = 0,
   selectFails = 0,
 }) {
-  let state = { current: "session-1", byId: { "session-1": { id: "session-1", blank, agentPreset: preset } } };
+  let state = { current: "session-1", byId: { "session-1": { id: "session-1", blank, projectionValues: { agentPreset: preset } } } };
   let currentProvider = provider;
   let queries = 0;
   const listeners = new Set();
   const selections = [];
-  const response = () => ({ result: { ok: true, value: {
+  const response = () => ({
     current: { provider: currentProvider },
     groups: [
       { id: "standard", models: [{ id: "standard-default" }] },
@@ -116,25 +116,25 @@ function modelHarness({
         : []),
       { id: "relay-claude", models: [{ id: "claude-default" }] },
     ],
-  } } });
-  const api = { sessions: {
-    async models() {
+  });
+  const directory = {
+    async load() {
       queries += 1;
       if (queries === 1 && firstQuery) return firstQuery;
       return response();
     },
-    async selectModel(selection) {
-      selections.push(selection);
+    async select(selection) {
+      selections.push({ sessionId: "session-1", ...selection });
       if (selections.length <= selectFails) {
-        return { result: { ok: false, error: { code: "not-ready", message: "models changed" } } };
+        throw new Error("models changed");
       }
       currentProvider = selection.provider;
-      return { result: { ok: true, value: selection } };
+      return;
     },
-  } };
+  };
   return {
     ctx: {
-      get: () => ({ api }),
+      modelDirectories: { directoryFor: () => directory },
       sessions: { list: {
         getSnapshot: () => state,
         subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
@@ -145,7 +145,7 @@ function modelHarness({
     currentProvider: () => currentProvider,
     modelQueries: () => queries,
     setPreset(agentPreset) {
-      state = { ...state, byId: { ...state.byId, "session-1": { ...state.byId["session-1"], agentPreset } } };
+      state = { ...state, byId: { ...state.byId, "session-1": { ...state.byId["session-1"], projectionValues: { agentPreset } } } };
       for (const listener of listeners) listener();
     },
     settle: () => new Promise(resolve => setTimeout(resolve, 10)),

@@ -4,8 +4,8 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ComponentType } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SlotCore, type StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { AdvancedDebugSource } from '../src/client/AdvancedDebug.tsx'
 
 vi.mock('../src/client/CodexProcessView.tsx', () => ({ CodexProcessView: () => <div>Process fixture</div> }))
@@ -31,8 +31,8 @@ describe('process presentation public slot wrappers', () => {
     const Assistant = () => <div>Native assistant</div>
     const Context = () => <div>Native context</div>
     await act(async () => {
-      harness.core.register({ name: slot, key: 'assistant-step', locale: 'conversation' }, Assistant)
-      harness.core.register({ name: slot, key: 'context', locale: 'conversation' }, Context)
+      harness.core.register({ name: slot, key: 'assistant-step', locale: 'chat' }, Assistant)
+      harness.core.register({ name: slot, key: 'context', locale: 'chat' }, Context)
     })
     const originals = harness.core.entries(slot).filter(entry => entry.options.priority === undefined)
       .filter(entry => entry.options.key !== 'relay-codex-process')
@@ -50,13 +50,13 @@ describe('process presentation public slot wrappers', () => {
     const harness = setup()
     let remove = () => {}
     await act(async () => {
-      remove = harness.core.register({ name: slot, key: 'assistant-step', locale: 'conversation' }, () => <div>First renderer</div>)
+      remove = harness.core.register({ name: slot, key: 'assistant-step', locale: 'chat' }, () => <div>First renderer</div>)
     })
     const originalWrapper = winner(harness.core, 'assistant-step')
     await act(async () => { remove() })
     expect(harness.core.entries(slot).some(entry => entry.options.key === 'assistant-step')).toBe(false)
     await act(async () => {
-      harness.core.register({ name: slot, key: 'assistant-step', locale: 'conversation' }, () => <div>Reloaded renderer</div>)
+      harness.core.register({ name: slot, key: 'assistant-step', locale: 'chat' }, () => <div>Reloaded renderer</div>)
     })
     const Wrapper = winner(harness.core, 'assistant-step').component as ComponentType<ChatNodeViewProps<'assistant-step'>>
     expect(winner(harness.core, 'assistant-step')).not.toBe(originalWrapper)
@@ -69,7 +69,7 @@ describe('process presentation public slot wrappers', () => {
     const native = vi.fn((props: ChatNodeViewProps<'assistant-step'>) => <button onClick={() => { props.inspectCall('fixture-call') }}>Native assistant</button>)
     const harness = setup()
     await act(async () => {
-      harness.core.register({ name: slot, key: 'assistant-step', locale: 'conversation' }, native)
+      harness.core.register({ name: slot, key: 'assistant-step', locale: 'chat' }, native)
     })
     const Wrapper = winner(harness.core, 'assistant-step').component as ComponentType<ChatNodeViewProps<'assistant-step'>>
     const process = safeProcess()
@@ -109,7 +109,7 @@ describe('process presentation public slot wrappers', () => {
         : contract === 'inject' ? { inject: () => ({}) } : { locale: 'changed-locale' }
     await act(async () => {
       for (const key of ['assistant-step', 'context'] as const) {
-        harness.core.register({ name: slot, key, locale: 'conversation', ...extra } as never, Native)
+        harness.core.register({ name: slot, key, locale: 'chat', ...extra } as never, Native)
       }
     })
     for (const key of ['assistant-step', 'context'] as const) {
@@ -121,7 +121,7 @@ describe('process presentation public slot wrappers', () => {
   it('hides only system-prompt context in simple mode after the matching process mounts', async () => {
     const harness = setup()
     await act(async () => {
-      harness.core.register({ name: slot, key: 'context', locale: 'conversation' }, () => <div>Native context</div>)
+      harness.core.register({ name: slot, key: 'context', locale: 'chat' }, () => <div>Native context</div>)
     })
     const Wrapper = winner(harness.core, 'context').component as ComponentType<ChatNodeViewProps<'context'>>
     const process = safeProcess()
@@ -178,7 +178,7 @@ function setup() {
         effects.push(effect())
       },
     },
-    conversationEvents: { register: registerProjection },
+    uiConversation: { events: { register: registerProjection } },
   } as unknown as ClientContext
   installProcessPresentation(ctx, debug)
   const dispose = () => { while (effects.length) effects.pop()!() }

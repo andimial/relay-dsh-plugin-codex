@@ -1,12 +1,14 @@
+import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
-  ChatConversationViewNode, ConversationMatch, ConversationNodeContext, ConversationNodeDefinition,
-} from '@deepseek-ai/dsh-client-runtime/client'
+  ConversationMatch, ConversationNodeContext, ConversationNodeDefinition,
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ContentBlock, ImageBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionEvent, TurnEndReason } from '@deepseek-ai/dsh-session/types'
 import { CODEX_ACTIVITY_TOOL, readActivityPayload } from '../../codex-activity-wire.mjs'
 import type { CodexActivityData, CodexActivityEventData } from './codex-activity.ts'
 
-// Official DSH contracts verified against b150a551b8d465e31e418e1b2eaf5e79bbb7d28e.
+// Official DSH contracts verified against 0a53fb55bea101816fa226bb964ae2bed71c343b.
 export type CodexProcessPhase = 'commentary' | 'final_answer'
 export type CodexProcessStatus = 'running' | 'completed' | 'error'
 export type CodexProcessTakeoverReason =
@@ -72,13 +74,13 @@ export interface CodexProcessState {
   readonly presentations: Readonly<Record<number, CodexPresentation>>
 }
 
-declare module '@deepseek-ai/dsh-client-runtime/client' {
+declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   interface ConversationTurnDataMap {
     'relay-codex-process': CodexProcessState
   }
 }
 
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+declare module '@deepseek-ai/dsh-client-ui-chat/client' {
   interface ChatNodeDataMap {
     'relay-codex-process': CodexProcessState
   }
@@ -310,13 +312,37 @@ function assistantMessage(state: CodexProcessState, event: SessionEvent<'assista
 }
 
 /** Pure ordered fold; no changes to native events, messages, blocks, or attachments. */
-export function reduceCodexProcess(state: CodexProcessState, event: SessionEvent): CodexProcessState {
+export function reduceCodexProcess(state: CodexProcessState, event: SessionEventLike): CodexProcessState {
   const next = foldCodexProcess(state, event)
   return next === state ? state : withTakeoverSafety(next)
 }
 
-function foldCodexProcess(state: CodexProcessState, event: SessionEvent): CodexProcessState {
+function foldCodexProcess(state: CodexProcessState, event: SessionEventLike): CodexProcessState {
   const matched = codexProcessDefinition.match(event)
+  if (event.type === 'chunkrow/text-chunks' || event.type === 'chunkrow/reasoning-chunks'
+    || event.type === 'chunkrow/tool-call-chunks') {
+    if (!matched || matched.id !== String(state.turn)) return state
+    const count = event.type === 'chunkrow/tool-call-chunks' ? event.data.args.length : event.data.texts.length
+    const offset = Math.max(0, (state.lastSeq ?? (event.seq - 1)) - event.seq + 1)
+    if (offset >= count) return state
+    const next = { ...state, lastSeq: event.seq + count - 1 }
+    if (state.foreignSteps.includes(event.data.step)) return next
+    if (event.type === 'chunkrow/tool-call-chunks') return unsupportedTool(next, event.seq + offset)
+    const { step, index } = event.data
+    const previous = state.segments.find(segment => segment.key === `block:${step}:${index}`)
+    if (previous?.settled) return next
+    const texts = event.data.texts.slice(offset)
+    const firstVisibleOffset = texts.findIndex(text => text.trim() !== '')
+    const updated = blockSegment(next, step, index, event.seq + offset, {
+      type: event.type === 'chunkrow/text-chunks' ? 'text' : 'reasoning',
+      text: (previous?.text ?? '') + texts.join(''),
+    }, false)
+    // Keep the original first visible token's sequence for native-row ordering.
+    if (previous?.visibleSeq !== undefined || firstVisibleOffset <= 0) return updated
+    const segments = updated.segments.map(segment => segment.key === `block:${step}:${index}`
+      ? { ...segment, visibleSeq: event.seq + offset + firstVisibleOffset } : segment)
+    return { ...updated, segments, firstVisibleSeq: firstVisible(segments, updated.ownedSteps) }
+  }
   if (!matched || matched.id !== String(state.turn) || (state.lastSeq !== undefined && event.seq <= state.lastSeq)) return state
   let next: CodexProcessState = { ...state, lastSeq: event.seq }
   switch (event.type) {
@@ -386,7 +412,7 @@ function foldCodexProcess(state: CodexProcessState, event: SessionEvent): CodexP
 }
 
 /** Rebuild a window without requiring its turn/start to have been loaded. */
-export function replayCodexProcess(events: readonly SessionEvent[]): CodexProcessState | undefined {
+export function replayCodexProcess(events: readonly SessionEventLike[]): CodexProcessState | undefined {
   let state: CodexProcessState | undefined
   for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
     const match = codexProcessDefinition.match(event)
@@ -431,7 +457,9 @@ export const codexProcessDefinition: ConversationNodeDefinition<CodexProcessStat
   match: event => {
     if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
     if (event.type === 'turn/end' || event.type === 'assistant/chunk' || event.type === 'assistant/message'
-      || event.type === 'tool/result' || event.type === 'tool/call') {
+      || event.type === 'tool/result' || event.type === 'tool/call'
+      || event.type === 'chunkrow/text-chunks' || event.type === 'chunkrow/reasoning-chunks'
+      || event.type === 'chunkrow/tool-call-chunks') {
       if ((event.type === 'assistant/message' || event.type === 'tool/result')
         && event.surfaceOp !== undefined && event.surfaceOp !== 'append') return null
       return { id: String(event.data.turn), role: 'update' }
@@ -445,6 +473,7 @@ export const codexProcessDefinition: ConversationNodeDefinition<CodexProcessStat
   update: (context, match) => reduceCodexProcess(context.state, match.event),
   publication: (match: ConversationMatch) => {
     if (match.event.type === 'turn/start') return 'none'
+    if (match.event.type.startsWith('chunkrow/')) return 'animation-frame'
     if (match.event.type !== 'assistant/chunk') return 'immediate'
     const type = match.event.data.chunk.type
     if (type === 'usage') return 'none'

@@ -10,9 +10,6 @@ import type { CodexActivityData } from '../src/client/codex-activity.ts'
 
 const markdownProbe = vi.hoisted(() => vi.fn())
 
-vi.mock('@deepseek-ai/dsh-client-runtime/client', () => ({
-  conversationContextKey: (kind: string, id: string) => `${kind.length}:${kind}${id}`,
-}))
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   MarkdownText: (props: { text: string; streaming?: boolean; fileMentions?: MarkdownFileMentions }) => {
@@ -42,15 +39,15 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   StateDot: ({ state }: { state: string }) => <span data-testid="state-dot" data-state={state} />,
 }))
 
-import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'
+const conversationContextKey = (kind: string, id: string) => `${kind}:${id}`
 import { GroupedCodexToolActivityView } from '../src/client/CodexActivityView.tsx'
 import { ActivityGroup, CodexProcessView, ProcessBody, groupProcessSegments } from '../src/client/CodexProcessView.tsx'
 import { initialCodexProcessState, type CodexProcessSegment, type CodexProcessState } from '../src/client/codex-process.ts'
 
 const startedAt = 1000
 const renderImages = () => null
-const useEmptySession: React.ComponentProps<typeof CodexProcessView>['useSession'] = selector =>
-  selector({ chat: { nodes: new Map() } } as never)
+const useEmptySession: React.ComponentProps<typeof CodexProcessView>['useChat'] = selector =>
+  selector({ nodes: new Map() } as never)
 
 beforeEach(() => {
   markdownProbe.mockClear()
@@ -364,7 +361,7 @@ describe('CodexProcessView file mentions', () => {
     const useTurnData = vi.fn(() => tail)
     const props = {
       node: { data: state, location: { kind, turn } }, sessionId: `file-mentions-${kind}`,
-      renderMessageImages: renderImages, openFile, fileMentions, useTurnData, useSession: useEmptySession,
+      renderMessageImages: renderImages, openFile, fileMentions, useTurnData, useChat: useEmptySession,
     } as unknown as React.ComponentProps<typeof CodexProcessView>
     const { rerender } = render(<CodexProcessView {...props} />)
     expect(useTurnData).toHaveBeenCalledWith('turn-tail')
@@ -388,7 +385,7 @@ describe('CodexProcessView file mentions', () => {
     const useTurnData = () => tail
     const makeProps = (location: unknown) => ({
       node: { data: state, location }, sessionId: 'file-mentions-lifecycle',
-      renderMessageImages: renderImages, openFile, fileMentions, useTurnData, useSession: useEmptySession,
+      renderMessageImages: renderImages, openFile, fileMentions, useTurnData, useChat: useEmptySession,
     } as unknown as React.ComponentProps<typeof CodexProcessView>)
     const { rerender } = render(<CodexProcessView {...makeProps({ kind: 'turn', turn: { status: 'running' } })} />)
     expect(fileMentions).not.toHaveBeenCalled()
@@ -413,19 +410,20 @@ describe('CodexProcessView readiness', () => {
   it('suppresses a represented native row only while its replacement is mounted', () => {
     const state = processState([tool('command', reading('completed'))], { status: 'completed' })
     const payload = { version: 1, threadId: 'thread', turnId: 'turn', itemId: 'command', phase: 'completed', activity: reading('completed') }
-    const snapshot = { chat: { nodes: new Map([[conversationContextKey('tool-call', 'command'), {
+    const snapshot = { nodes: new Map([[conversationContextKey('tool-call', 'command'), {
+      kind: 'tool-call', id: 'command',
       location: { kind: 'step', turn: { data: new Map([['relay-codex-process', state]]) } },
-    }]]) } }
+    }]]) }
     const props = {
       sessionId: 'process-session', callId: 'command', toolName: 'relay_codex_activity', openFile: vi.fn(),
       block: { kind: 'tool-result', callId: 'command', subCalls: [], call: null, isError: false, meta: { codexActivity: payload } },
-      useSession: selector => selector(snapshot as never),
+      useChat: selector => selector(snapshot as never),
     } as ToolCallViewProps
     const node = { data: state, location: { kind: 'turn', turn: { status: 'running' } } } as unknown as React.ComponentProps<typeof CodexProcessView>['node']
     const processProps: Partial<React.ComponentProps<typeof CodexProcessView>> = {
       node, sessionId: props.sessionId, renderMessageImages: renderImages,
       openFile: vi.fn(), inspectCall: vi.fn(), forkAt: vi.fn(), fileMentions: () => undefined,
-      useTurnData: () => undefined, useSession: useEmptySession,
+      useTurnData: () => undefined, useChat: useEmptySession,
     }
     const unsafe = { ...state, takeoverSafe: false, takeoverReasons: ['unsupported-tool'] as const }
     const tree = (show: boolean, safe = true) => <>
@@ -447,7 +445,7 @@ describe('CodexProcessView readiness', () => {
     expect(container.querySelector('[data-codex-process-turn]')).toBeNull()
     rerender(tree(true))
     expect(container.querySelector('[data-codex-grouped-call="command"]')).not.toBeNull()
-    const turnData = snapshot.chat.nodes.get(conversationContextKey('tool-call', 'command'))!.location.turn.data
+    const turnData = snapshot.nodes.get(conversationContextKey('tool-call', 'command'))!.location.turn.data
     turnData.set('relay-codex-process', unsafe)
     rerender(tree(true))
     expect(screen.getByRole('button', { name: 'Read README.md' })).not.toBeNull()
@@ -470,18 +468,19 @@ describe('CodexProcessView readiness', () => {
       { key: 'image', seq: 2, step: 0, kind: 'image', attachment: attachment() },
     ], { status: 'completed' })
     const payload = { version: 1, threadId: 'thread', turnId: 'turn', itemId: 'command', phase: 'completed', activity: reading('completed') }
-    const snapshot = { chat: { nodes: new Map([[conversationContextKey('tool-call', 'command'), {
+    const snapshot = { nodes: new Map([[conversationContextKey('tool-call', 'command'), {
+      kind: 'tool-call', id: 'command',
       location: { kind: 'turn', turn: { data: new Map([['relay-codex-process', state]]) } },
-    }]]) } }
+    }]]) }
     const nativeProps = {
       sessionId: `failed-process-${previouslyMounted}`, callId: 'command', toolName: 'relay_codex_activity',
       block: { kind: 'tool-result', callId: 'command', subCalls: [], call: null, isError: false, meta: { codexActivity: payload } },
-      useSession: selector => selector(snapshot as never),
+      useChat: selector => selector(snapshot as never),
     } as ToolCallViewProps
     const processProps = {
       node: { data: state, location: { kind: 'turn', turn: { status: 'closed' } } },
       sessionId: nativeProps.sessionId, useTurnData: () => undefined, fileMentions: () => undefined,
-      useSession: useEmptySession,
+      useChat: useEmptySession,
     } as unknown as React.ComponentProps<typeof CodexProcessView>
     const caught = vi.fn()
     const tree = (fail: boolean, boundaryKey = 'first') => <>
@@ -546,40 +545,45 @@ function renderLegacyBoundaryFixture() {
   })
   const payload = { version: 1, threadId: 'thread', turnId: 'turn', itemId: 'command', phase: 'completed', activity: reading('completed') }
   const nativeNodes = new Map<string, unknown>([[conversationContextKey('tool-call', 'command'), {
-    kind: 'tool-call', anchorSeq: 15,
+    kind: 'tool-call', id: 'command', anchorSeq: 15,
     location: { kind: 'step', turn: { data: new Map([['relay-codex-process', state]]) } },
   }]])
-  let snapshot = { chat: { nodes: nativeNodes } }
+  let snapshot = { nodes: nativeNodes }
   const listeners = new Set<() => void>()
   const subscribe = (listener: () => void) => {
     listeners.add(listener)
     return () => { listeners.delete(listener) }
   }
   const getSnapshot = () => snapshot
-  const useSession: React.ComponentProps<typeof CodexProcessView>['useSession'] = selector =>
+  const useChat: React.ComponentProps<typeof CodexProcessView>['useChat'] = selector =>
     selector(useSyncExternalStore(subscribe, getSnapshot, getSnapshot) as never)
   const nativeProps = {
     sessionId: 'legacy-boundary-session', callId: 'command', toolName: 'relay_codex_activity',
     block: { kind: 'tool-result', callId: 'command', subCalls: [], call: null, isError: false, meta: { codexActivity: payload } },
-    useSession,
+    useChat,
   } as ToolCallViewProps
   const processProps = {
     node: { data: state, location: { kind: 'turn', turn: { status: 'closed' } } },
     sessionId: nativeProps.sessionId, renderMessageImages: renderImages,
-    useSession, useTurnData: () => undefined, fileMentions: () => undefined,
+    useChat, useTurnData: () => undefined, fileMentions: () => undefined,
   } as unknown as React.ComponentProps<typeof CodexProcessView>
   const result = render(<>
     <GroupedCodexToolActivityView {...nativeProps} />
     <CodexProcessView {...processProps} />
   </>)
-  return { ...result, publishLegacy: (anchorSeq: number | undefined) => {
+  return { ...result, setNativeFolding: (foldable: boolean) => {
+    result.rerender(<>
+      <GroupedCodexToolActivityView {...nativeProps} />
+      <CodexProcessView {...processProps} turnProcess={{ foldable } as never} />
+    </>)
+  }, publishLegacy: (anchorSeq: number | undefined) => {
     act(() => {
       const nodes = new Map(nativeNodes)
       if (anchorSeq !== undefined) nodes.set('legacy-activity', {
         kind: 'relay-codex-activity', anchorSeq, visibility: 'visible', location: { kind: 'unresolved' },
         data: { ...payload, turnId: anchorSeq < 10 || anchorSeq > 30 ? 'other-turn' : 'turn', itemId: 'legacy-activity' },
       })
-      snapshot = { chat: { nodes } }
+      snapshot = { nodes }
       for (const listener of listeners) listener()
     })
   } }
@@ -617,3 +621,16 @@ function attachment(): NonNullable<CodexProcessSegment['attachment']> {
   return { attachmentId: 'fixture-image' as NonNullable<CodexProcessSegment['attachment']>['attachmentId'],
     mediaType: 'image/png', bytes: 64, width: 16, height: 16, name: 'fixture.png' }
 }
+
+
+it('restores native rows when official compact mode folds the Codex process container', () => {
+  const { container, setNativeFolding } = renderLegacyBoundaryFixture()
+  expect(container.querySelector('[data-codex-grouped-call="command"]')).not.toBeNull()
+  setNativeFolding(true)
+  expect(container.querySelector('[data-codex-process-turn]')).toBeNull()
+  expect(container.querySelector('[data-codex-process-fallback]')).not.toBeNull()
+  expect(screen.getByRole('button', { name: 'Read README.md' })).not.toBeNull()
+  setNativeFolding(false)
+  expect(container.querySelector('[data-codex-process-turn]')).not.toBeNull()
+  expect(container.querySelector('[data-codex-grouped-call="command"]')).not.toBeNull()
+})

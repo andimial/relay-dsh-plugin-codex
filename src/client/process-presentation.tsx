@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type ComponentType } from 'react'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 import { CodexProcessView } from './CodexProcessView.tsx'
 import { canTakeOverCodexProcess, codexProcessDefinition } from './codex-process.ts'
@@ -9,7 +9,7 @@ import type { AdvancedDebugSource } from './AdvancedDebug.tsx'
 
 /** Reuse only leaf registrations; child-slot authorization stays with DSH. */
 export function installProcessPresentation(ctx: ClientContext, debug: AdvancedDebugSource): void {
-  ctx.conversationEvents.register(codexProcessDefinition)
+  ctx.uiConversation.events.register(codexProcessDefinition)
   installContextPresentation(ctx, debug)
   ctx.slots.inject('conversation.chat.node', () => {
     const disposeProcess = ctx.slots.register({
@@ -26,10 +26,10 @@ export function installProcessPresentation(ctx: ClientContext, debug: AdvancedDe
       previous = original
       // Fail open on a changed official contract, rather than losing native UI.
       if (!original || original.children || original.store || original.inject
-        || original.locale !== 'conversation') return
+        || original.locale !== 'chat') return
       const Original = original.component as ComponentType<ChatNodeViewProps<'assistant-step'>>
       disposeAssistant = ctx.slots.register({
-        name: 'conversation.chat.node', key: 'assistant-step', priority: -20, locale: 'conversation',
+        name: 'conversation.chat.node', key: 'assistant-step', priority: -20, locale: 'chat',
       }, function CodexAssistantBoundary(props: ChatNodeViewProps<'assistant-step'>) {
         const process = props.useTurnData('relay-codex-process')
         const mounted = useProcessPresence(props.sessionId, process?.turn ?? -1)
@@ -52,10 +52,10 @@ function installContextPresentation(ctx: ClientContext, debug: AdvancedDebugSour
         entry.options.key === 'context' && (entry.options.priority ?? 0) >= 0)
       if (original === previous) return
       dispose?.(); dispose = undefined; previous = original
-      if (!original || original.children || original.store || original.inject || original.locale !== 'conversation') return
+      if (!original || original.children || original.store || original.inject || original.locale !== 'chat') return
       const Original = original.component as ComponentType<ChatNodeViewProps<'context'>>
       dispose = ctx.slots.register({
-        name: 'conversation.chat.node', key: 'context', priority: -20, locale: 'conversation',
+        name: 'conversation.chat.node', key: 'context', priority: -20, locale: 'chat',
       }, function CodexInternalContext(props: ChatNodeViewProps<'context'>) {
         const enabled = useSyncExternalStore(debug.subscribe, debug.getSnapshot, debug.getSnapshot)
         const process = props.useTurnData('relay-codex-process')

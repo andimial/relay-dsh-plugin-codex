@@ -1,10 +1,12 @@
+import type { ChatConversationViewNode, ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/client'
 import { describe, expect, it, vi } from 'vitest'
 import type {
-  ChatConversationViewNode, ConversationLocation, ConversationMatch, ConversationNodeContext,
-  ConversationNodeDefinition, ConversationTimelineSnapshot, ConversationViewDefinition, ToolCallBlock,
-} from '@deepseek-ai/dsh-client-runtime/client'
-import { ConversationNodeAssembler } from '@deepseek-ai/dsh-client-runtime/src/client/sessions/conversation-assembler.ts'
-import type { CallId, MessageId } from '@deepseek-ai/dsh-llm/brand'
+  ConversationLocation, ConversationMatch, ConversationNodeContext,
+  ConversationNodeDefinition, ConversationTimelineSnapshot, ConversationViewDefinition,
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { ConversationNodeAssembler } from '@deepseek-ai/dsh-client-ui-conversation/src/client/conversation/assembler.ts'
+import type { ToolCallId, MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { ContentBlock, ImageBlock, StreamChunk } from '@deepseek-ai/dsh-llm/types'
 import type { SessionEvent, SessionEventMap, TurnEndReason } from '@deepseek-ai/dsh-session/types'
 import { codexActivityDefinition, type CodexActivityEventData } from '../src/client/codex-activity.ts'
@@ -14,26 +16,17 @@ import {
   type CodexProcessState,
 } from '../src/client/codex-process.ts'
 
-// Bridge the browser-loader Client exports to their official implementations;
-// the assembler, assistant definition, and tool definition stay real.
-vi.mock('@deepseek-ai/dsh-client-runtime/client', async () => {
-  const { isAppendSurfaceEvent } = await import('@deepseek-ai/dsh-session/surface')
-  const { isTokenDelta } = await import('@deepseek-ai/dsh-llm/message')
-  const { emptyAssistantBlock } = await import('@deepseek-ai/dsh-client-runtime/src/client/sessions/partial.ts')
-  const { toAssistantBlock, toAssistantBlocks } = await import('@deepseek-ai/dsh-client-runtime/src/client/sessions/conversation.ts')
-  return { isAppendSurfaceEvent, isTokenDelta, emptyAssistantBlock, toAssistantBlock, toAssistantBlocks }
-})
 
 // Load the official implementation through its public contract without adding
 // its source-only declaration merges to the plugin's TypeScript program.
 const { toolDefinition } = await vi.importActual<{ toolDefinition: ConversationNodeDefinition }>(
-  '@deepseek-ai/dsh-client-ui-conversation/src/client/conversation-nodes/tool.ts',
+  '@deepseek-ai/dsh-client-ui-chat/src/client/conversation-nodes/tool.ts',
 )
 const { assistantDefinition } = await vi.importActual<{ assistantDefinition: ConversationNodeDefinition }>(
-  '@deepseek-ai/dsh-client-ui-conversation/src/client/conversation-nodes/assistant.ts',
+  '@deepseek-ai/dsh-client-ui-chat/src/client/conversation-nodes/assistant.ts',
 )
 
-// Native shapes from official DSH b150a551b8d465e31e418e1b2eaf5e79bbb7d28e.
+// Native shapes from official DSH 0a53fb55bea101816fa226bb964ae2bed71c343b.
 function event<T extends keyof SessionEventMap>(seq: number, type: T, data: SessionEventMap[T]): SessionEvent<T> {
   return { type, seq, time: seq * 100, data,
     ...type === 'assistant/message' || type === 'tool/result' ? { surfaceOp: 'append' } : {},
@@ -54,13 +47,13 @@ function payload(itemId = 'item', phase: 'started' | 'completed' = 'started'): C
 }
 
 function call(seq: number, itemId = 'item', step = 1) {
-  return event(seq, 'tool/call', { turn: 1, step, callId: `call-${itemId}` as CallId,
+  return event(seq, 'tool/call', { turn: 1, step, callId: `call-${itemId}` as ToolCallId,
     name: 'relay_codex_activity', arguments: JSON.stringify(payload(itemId)),
   })
 }
 
 function result(seq: number, itemId = 'item', step = 1, isError = false) {
-  const callId = `call-${itemId}` as CallId
+  const callId = `call-${itemId}` as ToolCallId
   return event(seq, 'tool/result', { turn: 1, step,
     message: { id: `result-${itemId}` as MessageId, role: 'user', source: { kind: 'tool', callId },
       content: [{ type: 'tool-result', toolCallId: callId, isError, content: [{ type: 'text', text: '/workspace\n' }] }],
@@ -90,7 +83,7 @@ function modernAssistant(seq: number, value: string | ContentBlock[], step = 1) 
 }
 
 const synthetic = (seq: number, itemId = 'item', step = 1) => assistant(seq, [{
-  type: 'tool-call', id: `call-${itemId}` as CallId, name: 'relay_codex_activity', arguments: JSON.stringify(payload(itemId)),
+  type: 'tool-call', id: `call-${itemId}` as ToolCallId, name: 'relay_codex_activity', arguments: JSON.stringify(payload(itemId)),
 }], step)
 
 function context(events: readonly SessionEvent[], incremental = true, location: ConversationLocation = { kind: 'unresolved' }): ConversationNodeContext<CodexProcessState> {
@@ -457,8 +450,8 @@ const testView: ConversationViewDefinition<ChatConversationViewNode, RuntimeSnap
   },
 }
 
-const input = (event: SessionEvent) => ({ event, view: undefined })
-function runtime(events: readonly SessionEvent[] = [], hasMore = false, definitions: readonly ConversationNodeDefinition[] = [definition]) {
+const input = (event: SessionEventLike) => ({ event, view: undefined })
+function runtime(events: readonly SessionEventLike[] = [], hasMore = false, definitions: readonly ConversationNodeDefinition[] = [definition]) {
   const assembler = new ConversationNodeAssembler(
     { entries: () => definitions, fallbackEntry: () => undefined }, { entries: () => [testView] },
   )
@@ -618,7 +611,7 @@ describe('conservative turn takeover', () => {
 
   it('disables takeover for tool-only assistant checkpoints even without tool/call events', () => {
     for (const name of ['bash', 'edit', 'relay_codex_activity']) {
-      const events = [start(), assistant(2, [{ type: 'tool-call', id: 'native' as CallId, name, arguments: '{}' }]),
+      const events = [start(), assistant(2, [{ type: 'tool-call', id: 'native' as ToolCallId, name, arguments: '{}' }]),
         assistant(3, [{ type: 'text', text: 'Done' }]), end(4)]
       expect(state(events)).toMatchObject({ owned: true, takeoverSafe: false, unsupportedToolSeq: 2 })
       expect(node(events)).toBeNull()
@@ -628,8 +621,8 @@ describe('conservative turn takeover', () => {
   it('disables takeover for unsupported result-only histories and streamed tool blocks', () => {
     const unsupported = [nativeResult(3, 'bash'),
       chunk(3, { type: 'block-start', index: 1, blockType: 'tool-call' }),
-      chunk(3, { type: 'tool-call-delta', index: 1, id: 'bash' as CallId, name: 'bash', argumentsDelta: '{}' }),
-      chunk(3, { type: 'block-end', index: 1, block: { type: 'tool-call', id: 'bash' as CallId, name: 'bash', arguments: '{}' } }),
+      chunk(3, { type: 'tool-call-delta', index: 1, id: 'bash' as ToolCallId, name: 'bash', argumentsDelta: '{}' }),
+      chunk(3, { type: 'block-end', index: 1, block: { type: 'tool-call', id: 'bash' as ToolCallId, name: 'bash', arguments: '{}' } }),
     ]
     for (const boundary of unsupported) {
       const events = [start(), assistant(2, [{ type: 'text', text: 'Before' }]), boundary,
@@ -868,5 +861,37 @@ describe('minimal legacy presentation gate', () => {
     expect(order(partial)).toEqual(order(live))
     expect(snapshot(partial).timeline.turns.get(1)?.data.get('relay-codex-process'))
       .toMatchObject({ takeoverSafe: false, takeoverReasons: ['legacy-no-presentation'] })
+  })
+})
+
+
+describe('DSH alpha.2 packed delta transport', () => {
+  it.each(['text', 'reasoning'] as const)('preserves raw %s content, visible anchors, and logical sequences', kind => {
+    const raw = [' ', 'hello', ' ', 'world'].map((value, offset) =>
+      chunk(3 + offset, { type: kind === 'text' ? 'text-delta' : 'reasoning-delta', index: 0, text: value }))
+    const packed: SessionEventLike = {
+      type: kind === 'text' ? 'chunkrow/text-chunks' : 'chunkrow/reasoning-chunks',
+      seq: 3, time: 300, data: { turn: 1, step: 1, index: 0, texts: [' ', 'hello', ' ', 'world'], dt: [100, 100, 100] },
+    }
+    const prefix = [start(), call(2)]
+    expect(replayCodexProcess([...prefix, packed])).toEqual(replayCodexProcess([...prefix, ...raw]))
+    const partial = replayCodexProcess([...prefix, raw[0], raw[1]])!
+    const restored = reduceCodexProcess(partial, packed)
+    expect(restored).toEqual(replayCodexProcess([...prefix, ...raw]))
+    expect(reduceCodexProcess(restored, packed)).toBe(restored)
+    const live = runtime(prefix)
+    live.append(input(packed)); live.flush()
+    expect(snapshot(live).nodes[0].data).toEqual(snapshot(runtime([...prefix, ...raw])).nodes[0].data)
+    expect(definition.publication?.({ event: packed } as ConversationMatch)).toBe('animation-frame')
+  })
+
+  it('keeps native tool rendering for packed tool argument deltas', () => {
+    const state = replayCodexProcess([start(), call(2), {
+      type: 'chunkrow/tool-call-chunks', seq: 3, time: 300,
+      data: { turn: 1, step: 1, index: 0, id: 'foreign-tool' as ToolCallId, args: ['{', '}'], dt: [100] },
+    }])!
+    expect(state.lastSeq).toBe(4)
+    expect(state.takeoverReasons).toContain('unsupported-tool')
+    expect(canTakeOverCodexProcess(state)).toBe(false)
   })
 })

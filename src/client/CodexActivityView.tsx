@@ -7,7 +7,6 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
-import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'
 import { readActivityPayload } from '../../codex-activity-wire.mjs'
 import { describeActivity, type ActivityCategory } from '../../codex-activity-labels.mjs'
 import type { CodexActivityData } from './codex-activity.ts'
@@ -40,8 +39,8 @@ export const CodexActivityView = memo(function CodexActivityView({ node }: Codex
 })
 
 export function GroupedCodexToolActivityView(props: ToolCallViewProps) {
-  const process = props.useSession(snapshot => {
-    const native = snapshot.chat.nodes.get(conversationContextKey('tool-call', props.callId))
+  const process = props.useChat(snapshot => {
+    const native = [...snapshot.nodes.values()].find(node => node.kind === 'tool-call' && node.id === props.callId)
     const location = native?.location
     if (location?.kind !== 'turn' && location?.kind !== 'step') return undefined
     return location.turn.data.get('relay-codex-process')

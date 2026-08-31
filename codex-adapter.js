@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 
-import { CallId, createMessage, LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
+import { ToolCallId, createMessage, LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 import { CODEX_ACTIVITY_TOOL } from "./codex-activity-wire.mjs";
 
 import { importCodexGeneratedImage, importCodexImage, importCodexMcpImage } from "./codex-image.js";
@@ -922,7 +922,7 @@ export class CodexDshAdapter extends LlmAdapter {
     state.activityItems.set(id, merged);
     if (!state.startedActivities.has(id)) {
       const payload = activityPayload(threadId, turnId, merged, "started");
-      const callId = CallId(`relay-codex:${JSON.stringify([threadId, turnId, id])}`);
+      const callId = ToolCallId(`relay-codex:${JSON.stringify([threadId, turnId, id])}`);
       const args = JSON.stringify(payload);
       // Native tool envelopes survive the official persistence vocabulary check.
       agent.session.append("assistant/message", {
@@ -940,7 +940,7 @@ export class CodexDshAdapter extends LlmAdapter {
     }
     if (phase === "completed" && !state.completedActivities.has(id)) {
       const payload = activityPayload(threadId, turnId, merged, "completed");
-      const callId = CallId(`relay-codex:${JSON.stringify([threadId, turnId, id])}`);
+      const callId = ToolCallId(`relay-codex:${JSON.stringify([threadId, turnId, id])}`);
       agent.session.append("tool/result", {
         ...state.location,
         message: createMessage({
