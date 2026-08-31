@@ -4,3 +4,6 @@ node_modules/
 
 # Local validation screenshots
 **/.tmp-*
+
+# Generated Git repository used by local migration probes
+/validation/migration-compatibility/fixtures/plain-text-workspace/git-fixture/
