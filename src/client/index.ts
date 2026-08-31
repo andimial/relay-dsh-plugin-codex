@@ -15,6 +15,10 @@ import {
   HiddenSessionLogAction,
   type AdvancedDebugInjected,
 } from './AdvancedDebug.tsx'
+import { CodexActivityView, GroupedCodexToolActivityView } from './CodexActivityView.tsx'
+import { installProcessPresentation } from './process-presentation.tsx'
+import { CODEX_ACTIVITY_TOOL } from '../../codex-activity-wire.mjs'
+import { codexActivityDefinition } from './codex-activity.ts'
 import { en, zh, type CodexLocaleKey } from './locales.ts'
 import { WorkspaceImportProvider, type WorkspaceImportInjected } from './WorkspaceImportAction.tsx'
 import type { SessionImportProviderSlotDefinition } from 'relay-dsh-plugin-session-import/contracts'
@@ -40,14 +44,28 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const inject = ['slots', 'theme', 'locale', 'sessions', 'workspaces', 'connection']
+export const inject = ['slots', 'theme', 'locale', 'sessions', 'workspaces', 'connection', 'uiConversation', 'modelDirectories']
 
 export function apply(ctx: ClientContext): () => void {
-  applyAdvancedDebug(ctx)
+  applyActivityPresentation(ctx)
+  const advancedDebug = applyAdvancedDebug(ctx)
+  installProcessPresentation(ctx, advancedDebug)
   applyWorkspaceImport(ctx)
   applySessionOpenSync(ctx)
   applyConnectionStatus(ctx)
   return installModelSelection(ctx as ModelSelectionContext, 'relay-codex', 'relay-codex', 'relay-claude')
+}
+
+function applyActivityPresentation(ctx: ClientContext): void {
+  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
+    name: 'tool.call.toolview',
+    key: CODEX_ACTIVITY_TOOL,
+  }, GroupedCodexToolActivityView))
+  ctx.uiConversation.events.register(codexActivityDefinition)
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+    name: 'conversation.chat.node',
+    key: 'relay-codex-activity',
+  }, CodexActivityView))
 }
 
 function applyConnectionStatus(ctx: ClientContext): void {
@@ -93,7 +111,7 @@ function applyWorkspaceImport(ctx: ClientContext): void {
   }, WorkspaceImportProvider))
 }
 
-function applyAdvancedDebug(ctx: ClientContext): void {
+function applyAdvancedDebug(ctx: ClientContext): AdvancedDebugPreference {
   ctx.effect(() => ctx.locale.register('relay.codex', { zh, en }), 'relay-codex: dictionaries')
   const t = ctx.locale.bind('relay.codex')
   const advancedDebug = new AdvancedDebugPreference()
@@ -118,4 +136,5 @@ function applyAdvancedDebug(ctx: ClientContext): void {
     const unsubscribe = advancedDebug.subscribe(reconcile); reconcile()
     return () => { unsubscribe(); removeShadow?.() }
   })
+  return advancedDebug
 }

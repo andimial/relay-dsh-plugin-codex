@@ -1144,7 +1144,7 @@ function appendDshOwnedTurn(session, turn, codexTurnId) {
         kind: "model",
         provider: "relay-codex",
         model: "codex-test",
-        replayState: { threadId: "codex-thread", turnId: codexTurnId },
+        replayState: { response: { threadId: "codex-thread", turnId: codexTurnId } },
       },
     }),
   }, { surfaceOp: "append" });

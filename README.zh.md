@@ -1,12 +1,14 @@
 # 在 DeepSeek Harness 中使用 Codex 对话
 
+> 未发布适配：本分支已迁移到 DSH `0.1.2-alpha.2`。npm 版本和标签尚未更新；下方已发布版本的安装示例不代表新版兼容性。见[适配说明](docs/dsh-0.1.2-alpha.2.md)。
+
 [![npm 版本](https://img.shields.io/npm/v/relay-dsh-plugin-codex?label=npm)](https://www.npmjs.com/package/relay-dsh-plugin-codex)
 [![CI](https://github.com/yangbobo2021/relay-dsh-plugin-codex/actions/workflows/ci.yml/badge.svg)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/actions/workflows/ci.yml)
 [![npm 月下载量](https://img.shields.io/npm/dm/relay-dsh-plugin-codex?label=downloads)](https://www.npmjs.com/package/relay-dsh-plugin-codex)
 [![GitHub Stars](https://img.shields.io/github/stars/yangbobo2021/relay-dsh-plugin-codex?style=flat)](https://github.com/yangbobo2021/relay-dsh-plugin-codex/stargazers)
 [![MIT 许可证](https://img.shields.io/github/license/yangbobo2021/relay-dsh-plugin-codex)](LICENSE)
-[![DSH 兼容版本](https://img.shields.io/badge/DSH-0.1.2--alpha.1-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
-[![npm 来源证明](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.4)
+[![DSH 兼容版本](https://img.shields.io/badge/DSH-0.1.2--alpha.2-2f7d68)](https://github.com/deepseek-ai/deepseek-harness)
+[![npm 来源证明](https://img.shields.io/badge/npm_provenance-verified-2f9e44)](https://www.npmjs.com/package/relay-dsh-plugin-codex/v/0.1.5)
 
 [English](README.md) | 中文
 
@@ -118,7 +120,7 @@ codex login
 npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add relay-dsh-plugin-codex@latest
 ```
 
-本文更新时，`latest` 指向稳定版 `0.1.4`。最新版本请以链接中的 npm 页面
+本文更新时，`latest` 指向稳定版 `0.1.5`。最新版本请以链接中的 npm 页面
 为准。
 
 #### npm 预发布版（DSH 预览阶段推荐）
@@ -131,21 +133,31 @@ npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add relay-dsh-plugin-cod
 npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-本文更新时，`next` 指向 `0.1.4`。
+本分支准备将 `0.1.6-rc.1` 发布到 `next`，不改变 `latest`。
+安装前请以 npm 注册表中实际发布的 dist-tag 为准。
+
+本次预发布保留原生服务档位和恢复后的配置，修复取消轮次的迟到命令清理，
+拒绝失效绑定上的迟到回复，并保留动态工具错误。具体配置见下文“与桌面 Codex
+对照执行”。默认仍捆绑 `@openai/codex@0.149.0`，不会分发或要求安装 Desktop
+的实验版程序，也不宣称完整复刻 Desktop。
+
+已知限制：原生命令事件偶尔缺少模型实际收到的错误文本；macOS 的 locale
+问题可能影响 `shasum` 等工具。这两项尚未宣称修复。回滚时先停止 DSH，重新
+安装 `relay-dsh-plugin-codex@0.1.5`，恢复曾修改的 profile 配置，再启动 DSH。
 
 #### GitHub 开发版
 
 如需测试尚未发布的修改，可以直接安装当前 `main` 分支：
 
 ```bash
-npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#main
+npx @deepseek-ai/dsh@0.1.2-alpha.2 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#main
 ```
 
 `main` 会持续变化。如需可复现的 GitHub 安装，请固定 Tag 或完整 Commit
 SHA。例如：
 
 ```bash
-npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.4
+npx @deepseek-ai/dsh@0.1.2-alpha.1 plugin --profile web add github:yangbobo2021/relay-dsh-plugin-codex#v0.1.6-rc.1
 ```
 
 官方 DSH CLI 会在需要时初始化 `web` Profile，通过 `pnpm` 安装所选软件包，
@@ -303,6 +315,47 @@ dsh web
 DSH Bundle 配置项 `codexCommand` 的优先级高于 `RELAY_CODEX_COMMAND`。建议填写
 原生可执行文件的绝对路径；两者都不设置时，会使用随插件发布并完成兼容性验证
 的 Codex 版本。
+
+### 与桌面 Codex 对照执行
+
+`codexExecutionMode` 支持 `enhanced`（默认）和 `native`。增强模式接入
+DSH 工具和下述执行规范；原生对照模式不注入这些动态工具和规范，用于区分
+原生 Codex 行为与 DSH 扩展的影响。两种模式都保留 DSH 的界面、权限选择和
+同一个 Codex Thread 的连续性。请用新建对话对照：切换模式不会删除历史上下文。
+原生对照模式不是 Codex Desktop 的完整克隆，也不会增加账号或宿主能力。
+
+客户端如实标识为 `relay_codex`，不声明尚未实现的 Desktop 身份证明和 MCP
+App HTML 渲染能力。工作区依赖工具只返回已确认存在的路径，缺少运行时则明确
+报告不可用。默认继续关闭 Shell 环境快照，避免将进程环境中的敏感值持久化。
+
+适配器保留原生创建、恢复和设置通知返回的 `nativeSettings`，区分界面请求值
+与原生确认值。恢复后的模型/推理设置若与 DSH 选择不同，会在下一轮正确同步。
+原生服务意外退出时，正在执行的对话明确结束为失败；DSH 工具随所属轮次取消，
+失效绑定上的迟到问题回复和工具结果不会被继续投递。
+每轮开始前记录已有后台进程；取消时基于原生后台注册表清理本轮新增命令，
+同时保留前一轮已有的后台服务。原生代码模式可能在“取消完成”之后才通知命令
+启动，因此适配器保留被取消轮次的标记，继续通过原生 API 停止该轮迟到的命令；
+迟到的命令、计划和 diff 通知不会把已结束的轮次重新标成运行中。清理失败明确
+记录错误。该竞态修复通过了 20 次直接运行时及 6 次隔离 DSH 取消实测，但不代表
+所有平台、原生版本和生命周期组合都已经通过验收。
+
+插件会保留原生 Codex 配置或已有对话的服务档位，例如 `service_tier =
+"priority"`。创建、分叉和开始新一轮时不发送 `serviceTier: null`，因为原生
+App Server 将这个显式空值解释为重置到默认档位，而不是继承配置。
+这不会自动为用户启用更高用量的档位；速度和用量仍由原生配置决定。
+
+对照时需同时记录实际程序的 `--version`、模型、推理档位、权限和工具配置。
+客户端名称相同不代表运行版本相同。可通过上述 `codexCommand` 在独立 DSH
+profile 中指定参照程序；这不会自动升级默认捆绑运行时，也不保证其他平台兼容。
+
+新建的原生 Codex 对话默认附加 Relay 自有的执行规范：限制工具发现和文件搜索
+范围、保留命令状态和异步会话标识、并发独立检查、避免重复查询同一来源。
+这不复制桌面客户端内部提示词，不改变工具授权或审批策略，也不重写已有或
+导入对话的指令。可在 `relay-codex-host` 的配置中设置
+`codexExecutionGuidance: false`，以单独验证运行版本的影响。
+
+动态工具结果会保留工具名称、返回文本和明确的失败状态。HTTP 404 等负向查询
+结果是否构成工具失败由来源工具决定，展示层不会把失败改成成功。
 
 如果 Settings 显示 `CODEX_EXECUTABLE_NOT_FOUND`，请删除错误的
 `codexCommand`/`RELAY_CODEX_COMMAND` 覆盖，或改为绝对路径。

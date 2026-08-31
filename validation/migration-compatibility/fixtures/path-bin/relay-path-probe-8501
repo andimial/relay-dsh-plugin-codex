@@ -1,0 +1,2 @@
+#!/bin/zsh
+print -r -- 'ENV001_PATH_EXEC_OK_8501_HQVN'

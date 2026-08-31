@@ -1,0 +1,14 @@
+--- pre/alpha.txt
++++ post/alpha.txt
+@@ -1,3 +1,3 @@
+ ALPHA_HEADER_KEEP_1201
+-ALPHA_STATE=OLD_1122
++ALPHA_STATE=NEW_7788
+ ALPHA_TAIL_KEEP_1202
+--- pre/beta.txt
++++ post/beta.txt
+@@ -1,3 +1,3 @@
+ BETA_HEADER_KEEP_2301
+-BETA_STATE=OLD_3344
++BETA_STATE=NEW_9900
+ BETA_TAIL_KEEP_2302

@@ -6,7 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { BlockAssembler, createMessage } from "@deepseek-ai/dsh-llm";
-import { Session, SessionId } from "@deepseek-ai/dsh-session";
+import { Context } from "@deepseek-ai/cordis";
+import SessionStore, { KNOWN_SESSION_EVENT_TYPES, Session, SessionId } from "@deepseek-ai/dsh-session";
+import JsonlSessionPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import { CODEX_ACTIVITY_TOOL } from "../codex-activity-wire.mjs";
 
 import {
   CODEX_THREAD_ACTIVE_WRITER,
@@ -21,6 +24,7 @@ import {
 } from "../codex-image.js";
 import { CodexLinkStore } from "../codex-link-store.js";
 import { CODEX_APP_DYNAMIC_TOOLS, handleCodexServerRequest } from "../codex-tools.js";
+import { CODEX_EXECUTION_GUIDANCE } from "../execution-guidance.mjs";
 
 
 test("the Codex preset streams reasoning and answers into the native DSH conversation", async () => {
@@ -45,11 +49,22 @@ test("the Codex preset streams reasoning and answers into the native DSH convers
   assert.equal(runtime.sent[0].message.model, "codex-test");
   assert.equal(runtime.sent[0].message.reasoningSummary, "concise");
   assert.equal(chunks.find(chunk => chunk.type === "reasoning-delta").text, "Checked the workspace.");
-  assert.ok(chunks.some(chunk => chunk.type === "text-delta" && chunk.text === "ok\n"));
+  assert.equal(chunks.some(chunk => chunk.type === "text-delta" && chunk.text === "ok\n"), false);
   assert.ok(chunks.some(chunk => chunk.type === "text-delta" && chunk.text === "done"));
-  assert.equal(chunks.at(-1).replayState.threadId, "thread-1");
+  assert.equal(chunks.at(-1).replayState.response.threadId, "thread-1");
+  assert.equal(chunks.at(-1).replayState.response.codexPresentation.version, 1);
+  assert.ok(chunks.at(-1).replayState.response.codexPresentation.blocks.some(block =>
+    block.itemId === "answer-1" && block.phase === "final_answer"));
   assert.deepEqual([...adapter.ownedTurnIdsForSession(agent.id)], []);
-  assert.deepEqual(agent.appended, []);
+  assert.deepEqual(activityEvents(agent).map(event => ({
+    phase: event.data.phase,
+    title: event.data.activity.title,
+    summary: event.data.activity.summary,
+    output: event.data.activity.output,
+  })), [
+    { phase: "started", title: "Ran commands", summary: "pwd", output: undefined },
+    { phase: "completed", title: "Ran commands", summary: "pwd", output: "ok\n" },
+  ]);
   assert.equal(runtime.createdConfig.dynamicTools.some(tool => tool.name === "relay_wait_for_event"), false);
   const codexAppTools = runtime.createdConfig.dynamicTools.find(tool => tool.type === "namespace" && tool.name === "codex_app");
   assert.deepEqual(codexAppTools.tools.map(tool => tool.name), ["load_workspace_dependencies"]);
@@ -74,7 +89,93 @@ test("an empty App Server reasoning item creates no empty DSH disclosure", async
   assert.equal(chunks.at(-1).reason.kind, "stop");
 });
 
-test("command output streams before completion and settles without duplication", async () => {
+test("execution guidance is scoped to new native threads and may be disabled", async () => {
+  for (const executionGuidance of [true, false]) {
+    const runtime = new FakeRuntime();
+    const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve(), executionGuidance });
+    const agent = fakeAgent();
+    adapter.attachAgent(agent);
+    await adapter.ensureThread(agent.id);
+    assert.equal(runtime.createdConfig.developerInstructions, executionGuidance ? CODEX_EXECUTION_GUIDANCE : undefined);
+    assert.equal(runtime.createdConfig.baseInstructions, undefined);
+    assert.equal(runtime.createdConfig.sandbox, "workspace-write");
+    assert.equal(runtime.createdConfig.approvalPolicy, "on-request");
+    // Rebinding/resuming must not replace an existing thread's instructions.
+    await adapter.ensureThread(agent.id, [...CODEX_APP_DYNAMIC_TOOLS, { type: "function", name: "fixture" }]);
+    assert.equal(runtime.created, 1);
+  }
+});
+
+test("native comparison mode excludes DSH tools and guidance without changing permissions or thread continuity", async () => {
+  const runtime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve(), executionMode: "native" });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+  for (const text of ["first question", "continue"]) {
+    await collect(adapter.stream({
+      provider: "relay-codex", model: "codex-test", sessionId: agent.id,
+      tools: [{ name: "fixture_tool", description: "fixture", parameters: { type: "object" } }],
+      messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text }] }],
+    }));
+  }
+  assert.equal(runtime.created, 1);
+  assert.deepEqual(runtime.createdConfig.dynamicTools, []);
+  assert.equal(runtime.createdConfig.developerInstructions, undefined);
+  assert.equal(runtime.createdConfig.sandbox, "workspace-write");
+  assert.equal(runtime.createdConfig.approvalPolicy, "on-request");
+  assert.equal(adapter.hasDshTool(agent.id, "fixture_tool"), false);
+  assert.equal(adapter.activeTurnSignals.size, 0);
+  assert.throws(() => new CodexDshAdapter({ runtime, executionMode: "typo" }), /Unknown Codex execution mode/);
+});
+
+test("presentation preserves explicit phases and never emits command errors as success", async () => {
+  const actions = [{ type: "read", command: "cat README.md", name: "README.md", path: "README.md" }];
+  const runtime = new McpImageRuntime({
+    type: "commandExecution", id: "read-error", command: "cat README.md",
+    commandActions: actions, status: "completed", exitCode: 1, aggregatedOutput: "not found\n",
+  });
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex", model: "codex-test", sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "read" }] }],
+  }));
+  const activity = activityEvents(agent).at(-1).data.activity;
+  assert.equal(activity.status, "error");
+  assert.deepEqual(JSON.parse(activity.commandActions), actions);
+  assert.equal(activity.output, "not found\n");
+  const metadata = chunks.at(-1).replayState.response.codexPresentation.blocks;
+  assert.deepEqual(metadata, [{ index: 0, itemId: "mcp-image-answer", phase: "final_answer" }]);
+});
+
+test("dynamic tool results retain their text, identity and failure in persisted DSH history", async () => {
+  for (const success of [true, false]) {
+    const text = success ? '{"available":false,"status":404}' : "Plugin source returned HTTP 404.";
+    const runtime = new McpImageRuntime({
+      type: "dynamicToolCall", id: "dynamic-result", namespace: "dsh", tool: "plugin_discover",
+      arguments: { action: "inspect", target: "fixture-plugin" }, status: "completed", success,
+      contentItems: [{ type: "inputText", text }],
+    });
+    const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+    const agent = fakeAgent();
+    adapter.attachAgent(agent);
+    const chunks = await collect(adapter.stream({
+      provider: "relay-codex", model: "codex-test", sessionId: agent.id,
+      messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "inspect" }] }],
+    }));
+    const activity = activityEvents(agent).at(-1).data.activity;
+    assert.equal(activity.output, text);
+    assert.equal(activity.title, "dsh / plugin_discover");
+    assert.equal(activity.status, success ? "completed" : "error");
+    const result = agent.appended.findLast(event => event.type === "tool/result").data.message.content[0];
+    assert.equal(result.content[0].text, text);
+    assert.equal(result.isError, !success);
+    assert.equal(chunks.filter(chunk => chunk.type === "text-delta").some(chunk => chunk.text.includes(text)), false);
+  }
+});
+
+test("command output is persisted as activity and never pollutes assistant markdown", async () => {
   const runtime = new StreamingCommandRuntime();
   const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
   const agent = fakeAgent();
@@ -91,16 +192,12 @@ test("command output streams before completion and settles without duplication",
   })[Symbol.asyncIterator]();
 
   const chunks = [];
-  let firstMarker = null;
-  while (!firstMarker) {
+  while (!runtime.commandCompleted) {
     const next = await iterator.next();
     assert.equal(next.done, false, "stream ended before the first command marker");
     chunks.push(next.value);
-    if (next.value.type === "text-delta" && next.value.text.includes("STREAM_FIRST_4102")) {
-      firstMarker = next.value;
-    }
+    assert.equal(JSON.stringify(next.value).includes("STREAM_FIRST_4102"), false);
   }
-  assert.equal(runtime.commandCompleted, false, "first marker was delayed until command completion");
 
   for (;;) {
     const next = await iterator.next();
@@ -108,14 +205,19 @@ test("command output streams before completion and settles without duplication",
     chunks.push(next.value);
   }
 
-  const commandBlock = chunks.find(chunk =>
-    chunk.type === "block-end"
-      && chunk.block?.type === "text"
-      && chunk.block.text.includes("STREAM_FIRST_4102"));
-  assert.equal(commandBlock.block.text, "STREAM_FIRST_4102\nREPEATED_LINE\nREPEATED_LINE\nSTREAM_LAST_8604\n");
-  assert.equal(commandBlock.block.text.match(/STREAM_FIRST_4102/g)?.length, 1);
-  assert.equal(commandBlock.block.text.match(/STREAM_LAST_8604/g)?.length, 1);
-  assert.equal(commandBlock.block.text.match(/REPEATED_LINE/g)?.length, 2);
+  const commandActivities = activityEvents(agent).map(event => event.data);
+  assert.equal(commandActivities.length, 2);
+  assert.equal(commandActivities[0].phase, "started");
+  assert.equal(commandActivities[0].activity.title, "Ran commands");
+  assert.equal(commandActivities[0].activity.summary, "printf first; sleep; printf last");
+  assert.equal(commandActivities[0].activity.input, "$ printf first; sleep; printf last");
+  assert.equal(commandActivities[1].phase, "completed");
+  assert.equal(commandActivities[1].activity.title, "Ran commands");
+  assert.equal(commandActivities[1].activity.output, "STREAM_FIRST_4102\nREPEATED_LINE\nREPEATED_LINE\nSTREAM_LAST_8604\n");
+  assert.equal(commandActivities[1].activity.output.match(/STREAM_FIRST_4102/g)?.length, 1);
+  assert.equal(commandActivities[1].activity.output.match(/STREAM_LAST_8604/g)?.length, 1);
+  assert.equal(commandActivities[1].activity.output.match(/REPEATED_LINE/g)?.length, 2);
+  assert.equal(JSON.stringify(chunks).includes("STREAM_FIRST_4102"), false);
   assert.equal(chunks.filter(chunk => chunk.type === "text-delta" && chunk.text === "done").length, 1);
   assert.equal(chunks.some(chunk => chunk.blockType === "tool-call" || chunk.block?.type === "tool-call"), false);
   assert.equal(chunks.filter(chunk => chunk.type === "finish").length, 1);
@@ -124,12 +226,12 @@ test("command output streams before completion and settles without duplication",
   const assembler = new BlockAssembler();
   for (const chunk of chunks) assembler.push(chunk);
   assert.deepEqual(assembler.message().content, [
-    { type: "text", text: "STREAM_FIRST_4102\nREPEATED_LINE\nREPEATED_LINE\nSTREAM_LAST_8604\n" },
     { type: "text", text: "done" },
   ]);
 
   const persisted = Session.create(SessionId("command-output-persistence"));
   persisted.append("turn/start", { turn: 1 });
+  for (const event of agent.appended) persisted.append(event.type, event.data, event.opts);
   persisted.append("assistant/message", {
     turn: 1,
     step: 1,
@@ -142,8 +244,69 @@ test("command output streams before completion and settles without duplication",
   persisted.append("turn/end", { turn: 1, reason: { kind: "completed" } });
   const stored = JSON.parse(JSON.stringify({ header: persisted.header, events: persisted.events }));
   const reloaded = Session.fromRestore(SessionId("command-output-persistence"), stored.events, stored.header);
-  assert.deepEqual(reloaded.deriveMessages()[0].content, assembler.message().content);
+  assert.deepEqual(reloaded.deriveMessages().at(-1).content, assembler.message().content);
+  assert.ok(reloaded.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)));
 });
+
+for (const compression of ["none", "zstd"]) {
+  test(`activity survives official ${compression} persistence cold load and repeated reopen`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-activity-reload-"));
+    const contexts = [];
+    async function mount() {
+      const ctx = new Context();
+      contexts.push(ctx);
+      await ctx.plugin(SessionStore);
+      await ctx.plugin(JsonlSessionPersistence, { root, compression });
+      return ctx;
+    }
+    try {
+      const id = SessionId(`activity-${compression}`);
+      const agent = { id, ctx: {}, session: Session.create(id, [], {
+        ...Session.create(id).header, cwd: root, agentPreset: "relay-codex",
+      }) };
+      agent.session.append("turn/start", { turn: 3 });
+      agent.session.append("step/start", { turn: 3, step: 2 });
+      const adapter = new CodexDshAdapter({ runtime: new FakeRuntime(), ready: Promise.resolve() });
+      adapter.attachAgent(agent);
+      const chunks = await collect(adapter.stream({
+        provider: "relay-codex", model: "codex-test", sessionId: id,
+        messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "pwd" }] }],
+      }));
+      const assembler = new BlockAssembler();
+      for (const chunk of chunks) assembler.push(chunk);
+      agent.session.append("assistant/message", {
+        turn: 3, step: 2, message: createMessage({
+          role: "assistant", source: { kind: "model", provider: "relay-codex", model: "codex-test" },
+          content: assembler.message().content,
+        }),
+      }, { surfaceOp: "append" });
+      agent.session.append("step/end", { turn: 3, step: 2 });
+      agent.session.append("turn/end", { turn: 3, reason: { kind: "completed" } });
+      const writer = await mount();
+      await writer.sessionPersistence.create(agent.session.header);
+      await writer.sessionPersistence.append(id, agent.session.events);
+      await writer.fiber.dispose();
+      const reader = await mount();
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const loaded = await reader.sessionPersistence.load(id);
+        assert.deepEqual(loaded.events, agent.session.events);
+        assert.ok(loaded.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)));
+        const call = loaded.events.find(event => event.type === "tool/call");
+        const result = loaded.events.find(event => event.type === "tool/result");
+        assert.equal(call.data.name, CODEX_ACTIVITY_TOOL);
+        assert.equal(call.data.turn, 3);
+        assert.equal(call.data.step, 2);
+        assert.equal(result.data.meta.codexActivity.activity.output, "ok\n");
+        assert.equal(result.data.message.source.callId, call.data.callId);
+        const restored = Session.fromRestore(id, loaded.events, loaded.meta);
+        assert.equal(restored.deriveMessages().at(-1).content.some(block => block.type === "text" && block.text === "done"), true);
+      }
+    } finally {
+      for (const ctx of contexts) await ctx.fiber.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("command completion backfills output, reconciles snapshots, and ignores empty or late data", async () => {
   const runtime = new CommandCompletionRuntime();
@@ -165,14 +328,53 @@ test("command completion backfills output, reconciles snapshots, and ignores emp
   const assembler = new BlockAssembler();
   for (const chunk of chunks) assembler.push(chunk);
   assert.deepEqual(assembler.message().content, [
-    { type: "text", text: "COMPLETION_ONLY\n" },
-    { type: "text", text: "CROSS_SOURCE_SAME\n" },
-    { type: "text", text: "AUTHORITATIVE_FINAL\n" },
     { type: "text", text: "done" },
   ]);
-  assert.equal(JSON.stringify(assembler.message()).match(/CROSS_SOURCE_SAME/g)?.length, 1);
+  const completed = activityEvents(agent)
+    .map(event => event.data)
+    .filter(event => event.phase === "completed")
+    .map(event => event.activity.output);
+  assert.deepEqual(completed, [
+    "COMPLETION_ONLY\n",
+    undefined,
+    "CROSS_SOURCE_SAME\n",
+    "AUTHORITATIVE_FINAL\n",
+  ]);
+  assert.equal(JSON.stringify(completed).match(/CROSS_SOURCE_SAME/g)?.length, 1);
   assert.equal(chunks.some(chunk => JSON.stringify(chunk).includes("LATE_DELTA")), false);
-  assert.equal(chunks.filter(chunk => chunk.type === "block-start").length, 4);
+  assert.equal(chunks.filter(chunk => chunk.type === "block-start").length, 1);
+});
+
+test("files, image views, MCP calls, and searches are surfaced as activity rows", async () => {
+  const runtime = new MixedActivityRuntime();
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex",
+    model: "codex-test",
+    sessionId: agent.id,
+    messages: [{
+      role: "user",
+      source: { kind: "user" },
+      content: [{ type: "text", text: "inspect mixed tools" }],
+    }],
+  }));
+
+  const assembler = new BlockAssembler();
+  for (const chunk of chunks) assembler.push(chunk);
+  assert.deepEqual(assembler.message().content, [{ type: "text", text: "done" }]);
+  assert.deepEqual(activityEvents(agent)
+    .map(event => event.data)
+    .filter(data => data.phase === "completed")
+    .map(data => [data.itemId, data.activity.type, data.activity.title, data.activity.summary]), [
+      ["edit-1", "fileChange", "Edited files", "src/app.ts"],
+      ["image-1", "imageView", "Viewed an image", "/workspace/relay/screenshot.png"],
+      ["mcp-1", "mcpToolCall", "Read skill", "codex_app/read_skill"],
+      ["search-1", "webSearch", "Searched web", "DSH Codex presentation"],
+    ]);
+  assert.equal(JSON.stringify(chunks).includes("src/app.ts"), false);
 });
 
 test("an unconfirmed command cleanup is surfaced instead of reporting a successful stop", async () => {
@@ -206,6 +408,8 @@ test("an unconfirmed command cleanup is surfaced instead of reporting a successf
   assert.equal(chunks.at(-1).reason.kind, "error");
   assert.equal(chunks.at(-1).reason.failure.code, "CODEX_TURN_INTERRUPT_CLEANUP_FAILED");
   assert.match(chunks.at(-1).reason.failure.message, /late side effects/i);
+  assert.deepEqual(activityEvents(agent).map(event => event.data.activity.status), ["running", "error"]);
+  assert.equal(runtime.listenerCount("activity"), 0);
   assert.deepEqual(errors, [{
     message: "Codex interrupted work could not be confirmed terminated",
     details: {
@@ -242,6 +446,113 @@ test("a confirmed command cleanup preserves the standard aborted Turn result", a
   assert.equal(chunks.at(-1).reason.kind, "aborted");
   assert.equal(chunks.at(-1).reason.failure.code, "ABORTED");
 });
+
+for (const source of ['native', 'raw', 'snapshot']) {
+  test(`cancellation retains ${source} command output arriving during interrupt RPC`, async () => {
+    const runtime = new class extends HangingInterruptRuntime {
+      async sendMessage(threadId) {
+        this.emit('activity', notification('item/started', threadId, 'late-cancel', {
+          item: { id: 'owned-command', type: 'commandExecution', processId: 'owned-process', command: 'sleep 90', status: 'inProgress' },
+        }));
+        this.emit('activity', notification('item/agentMessage/delta', threadId, 'late-cancel', { itemId: 'text', delta: 'Cancel now' }));
+        return { id: 'late-cancel', status: 'inProgress', items: [] };
+      }
+      async interruptTurn(threadId, turnId) {
+        const method = source === 'raw' ? 'item/codeModeShell/outputDelta' : 'item/commandExecution/outputDelta';
+        this.emit('activity', notification(method, threadId, 'other-turn', { itemId: 'owned-command', processId: 'owned-process', delta: 'WRONG_TURN' }));
+        this.emit('activity', notification('item/completed', threadId, turnId, {
+          item: { id: 'unowned', type: 'commandExecution', status: 'completed', aggregatedOutput: 'UNOWNED' },
+        }));
+        if (source === 'snapshot') {
+          this.emit('activity', notification('turn/completed', threadId, turnId, { turn: { id: turnId, status: 'interrupted', items: [
+            { id: 'owned-command', type: 'commandExecution', processId: 'owned-process', command: 'sleep 90', status: 'failed', aggregatedOutput: 'LATE_STDOUT\n' },
+          ] } }));
+        } else this.emit('activity', notification(method, threadId, turnId, { itemId: 'owned-command', processId: 'owned-process', delta: 'LATE_STDOUT\n' }));
+      }
+    }();
+    const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+    const agent = fakeAgent();
+    adapter.attachAgent(agent);
+    const controller = new AbortController();
+    for await (const chunk of adapter.stream({ provider: 'relay-codex', model: 'codex-test', sessionId: agent.id, signal: controller.signal,
+      messages: [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'cancel' }] }],
+    })) if (chunk.type === 'text-delta') controller.abort();
+    const completed = activityEvents(agent).filter(event => event.data.phase === 'completed');
+    assert.equal(completed.length, 1);
+    assert.equal(completed[0].data.activity.output, 'LATE_STDOUT\n');
+    assert.equal(completed[0].data.activity.status, 'error');
+  });
+}
+
+for (const { name, processId, raw, native, expected } of [
+  { name: "native item output", raw: [], native: ["BEFORE_CANCEL\n"], expected: "BEFORE_CANCEL\n" },
+  { name: "raw process output", processId: "cancel-process", raw: ["RAW_BEFORE_CANCEL\n"], native: [], expected: "RAW_BEFORE_CANCEL\n" },
+  { name: "mixed process output", processId: "cancel-process", raw: ["RAW_BEFORE_CANCEL\n"],
+    native: ["NATIVE_BEFORE_CANCEL\n", "REPEATED\n", "REPEATED\n"], expected: "RAW_BEFORE_CANCEL\nNATIVE_BEFORE_CANCEL\nREPEATED\nREPEATED\n" },
+  { name: "mirrored process output", processId: "cancel-process", raw: ["BEFORE_CANCEL\n"], native: ["BEFORE_CANCEL\n"], expected: "BEFORE_CANCEL\n" },
+]) {
+  test(`cancelling after buffered ${name} persists the failed command output`, async () => {
+    const actions = [{ type: "unknown", cmd: "printf before; sleep 60" }];
+    const runtime = new class extends HangingInterruptRuntime {
+      async sendMessage(threadId, message) {
+        this.sent.push({ threadId, message });
+        const turnId = "turn-buffered-cancel";
+        this.emit("activity", notification("item/started", threadId, turnId, {
+          item: { id: "buffered-command", type: "commandExecution", processId,
+            command: actions[0].cmd, commandActions: actions, status: "inProgress" },
+        }));
+        for (const delta of raw) {
+          this.emit("activity", notification("item/codeModeShell/outputDelta", threadId, turnId, { processId, delta }));
+        }
+        for (const delta of native) {
+          this.emit("activity", notification("item/commandExecution/outputDelta", threadId, turnId, { itemId: "buffered-command", delta }));
+        }
+        this.emit("activity", notification("item/started", threadId, turnId, {
+          item: { type: "agentMessage", id: "checkpoint", phase: "commentary" },
+        }));
+        this.emit("activity", notification("item/agentMessage/delta", threadId, turnId, {
+          itemId: "checkpoint", delta: "Waiting for the command.",
+        }));
+        return { id: turnId, status: "inProgress", items: [] };
+      }
+    }();
+    const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve() });
+    const agent = fakeAgent();
+    agent.session.events.push({ type: "turn/start", data: { turn: 3 } }, { type: "step/start", data: { turn: 3, step: 2 } });
+    adapter.attachAgent(agent);
+    const controller = new AbortController();
+    const chunks = [];
+    for await (const chunk of adapter.stream({
+      provider: "relay-codex", model: "codex-test", sessionId: agent.id, signal: controller.signal,
+      messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "run a long command" }] }],
+    })) {
+      chunks.push(chunk);
+      // The checkpoint is consumed only after all preceding output deltas were buffered.
+      if (chunk.type === "text-delta" && chunk.text === "Waiting for the command.") controller.abort();
+    }
+
+    assert.equal(controller.signal.aborted, true);
+    assert.equal(chunks.at(-1).reason.kind, "aborted");
+    assert.equal(chunks.at(-1).reason.failure.code, "ABORTED");
+    const events = activityEvents(agent).map(event => event.data);
+    assert.deepEqual(events.map(event => [event.phase, event.activity.status]), [["started", "running"], ["completed", "error"]]);
+    const result = agent.appended.filter(event => event.type === "tool/result");
+    assert.equal(result.length, 1);
+    assert.equal(events[1].activity.output, expected);
+    assert.deepEqual(JSON.parse(events[1].activity.commandActions), actions);
+    assert.equal(events[1].activity.input, "$ printf before; sleep 60");
+    assert.equal(events[1].activity.exitCode, undefined);
+    assert.deepEqual([events[1].threadId, events[1].turnId, events[1].itemId], ["thread-1", "turn-buffered-cancel", "buffered-command"]);
+    assert.deepEqual([result[0].data.turn, result[0].data.step], [3, 2]);
+    const block = result[0].data.message.content[0];
+    assert.equal(block.isError, true);
+    assert.deepEqual(block.content, [{ type: "text", text: expected }]);
+    assert.equal(block.toolCallId, agent.appended.find(event => event.type === "tool/call").data.callId);
+    assert.equal(JSON.stringify(chunks).includes("BEFORE_CANCEL"), false);
+    assert.deepEqual(runtime.interruptions, [{ threadId: "thread-1", turnId: "turn-buffered-cancel" }]);
+    assert.equal(runtime.listenerCount("activity"), 0);
+  });
+}
 
 test("Codex reasoning efforts use compact native selector labels", async () => {
   const runtime = new FakeRuntime();
@@ -605,7 +916,7 @@ test("automatic title generation uses an isolated ephemeral Codex thread", async
   assert.deepEqual(runtime.released, [titleCall.threadId]);
   assert.ok(mainChunks.some(chunk => chunk.type === "text-delta" && chunk.text === "done"));
   assert.equal(titleChunks.find(chunk => chunk.type === "text-delta").text, "项目文件查询");
-  assert.deepEqual(agent.appended, []);
+  assert.deepEqual(activityEvents(agent).map(event => event.data.threadId), [mainCall.threadId, mainCall.threadId]);
 });
 
 test("an unrelated DSH plugin message cannot enter the main Codex thread", async () => {
@@ -933,9 +1244,11 @@ test("a forked DSH Session branches through App Server and binds the child Threa
           provider: "relay-codex",
           model: "codex-test",
           replayState: {
+            response: {
             threadId: parentThreadId,
             turnId: "turn-original",
             itemId: "item-original",
+            },
           },
         },
         content: [{ type: "text", text: "parent answer" }],
@@ -1145,6 +1458,34 @@ test("Codex image media types are derived from supported byte signatures", () =>
   ];
 
   for (const [data, expected] of samples) assert.equal(detectImageMediaType(data), expected);
+});
+
+test("generated-image completion becomes one durable image before the final answer", async () => {
+  const jpeg = await readFile(new URL("../docs/images/dsh-new-session-backends.jpg", import.meta.url));
+  const saved = [];
+  const runtime = new McpImageRuntime({
+    type: "imageGeneration", id: "generated-image-delivery", status: "completed", result: jpeg.toString("base64"),
+  });
+  const adapter = new CodexDshAdapter({ runtime, ready: Promise.resolve(), attachments: {
+    async saveImage(input) {
+      saved.push(input);
+      return { attachmentId: "generated-delivery", mediaType: input.mediaType, bytes: input.data.length, name: input.name };
+    },
+  } });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+  const chunks = await collect(adapter.stream({
+    provider: "relay-codex", model: "codex-test", sessionId: agent.id,
+    messages: [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: "Generate an image" }] }],
+  }));
+  assert.equal(saved.length, 1, "completion snapshot must not duplicate a delivered image");
+  assert.deepEqual(Buffer.from(saved[0].data), jpeg);
+  const blocks = chunks.filter(chunk => chunk.type === "block-end");
+  assert.deepEqual(blocks.map(chunk => chunk.block.type), ["image", "text"]);
+  assert.equal(blocks[0].block.attachment.attachmentId, "generated-delivery");
+  assert.equal(chunks.at(-1).replayState.response.codexPresentation.blocks.at(-1).phase, "final_answer");
+  assert.equal(agent.appended.some(event => event.type === "relay-codex/activity"), false);
+  assert.equal(activityEvents(agent).at(-1).data.activity.type, "imageGeneration");
 });
 
 test("completed MCP image results reach DSH attachments in exact content order", async () => {
@@ -1964,6 +2305,60 @@ test("subagent activity routes descendant interactions only while the owning roo
   assert.match(interactions.rejected.at(-1).error.message, /no owning live DSH Session/);
 });
 
+test("cancelled DSH dynamic tools receive the turn signal and cannot send a late success", async () => {
+  const adapterRuntime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime: adapterRuntime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+  await adapter.ensureThread(agent.id);
+  adapter.dshToolNames.set(agent.id, new Set(["wait_fixture"]));
+  const controller = new AbortController();
+  adapter.activeTurnSignals.set("thread-1", controller.signal);
+  const started = Promise.withResolvers();
+  agent.ctx = { tools: { execute: async ({ signal }) => {
+    assert.equal(signal, controller.signal);
+    started.resolve();
+    await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+    return { content: [{ type: "text", text: "late result" }] };
+  } } };
+  const runtime = new InteractionRuntime();
+  const pending = handleCodexServerRequest({ agents: { get: () => agent } }, {
+    adapter, runtime, request: request("cancelled-tool", "item/dynamicTool/call", {
+      namespace: "dsh", name: "wait_fixture", arguments: {},
+    }),
+  });
+  await started.promise;
+  controller.abort();
+  await pending;
+  assert.equal(runtime.dynamic.length, 0);
+  assert.equal(runtime.rejected.length, 1);
+});
+
+test("a late question answer cannot be delivered after its DSH session is detached", async () => {
+  const adapterRuntime = new FakeRuntime();
+  const adapter = new CodexDshAdapter({ runtime: adapterRuntime, ready: Promise.resolve() });
+  const agent = fakeAgent();
+  adapter.attachAgent(agent);
+  await adapter.ensureThread(agent.id);
+  const asked = Promise.withResolvers();
+  const answer = Promise.withResolvers();
+  const runtime = new InteractionRuntime();
+  const pending = handleCodexServerRequest({
+    agents: { get: () => agent },
+    userQuestions: { ask() { asked.resolve(); return answer.promise; } },
+  }, {
+    adapter, runtime, request: request("stale-question", "item/tool/requestUserInput", {
+      questions: [{ id: "q", header: "Choice", question: "Continue?" }],
+    }),
+  });
+  await asked.promise;
+  adapter.detachAgent(agent.id);
+  answer.resolve({ answers: [{ id: "q", selected: ["yes"] }] });
+  await pending;
+  assert.equal(runtime.resolved.length, 0);
+  assert.match(runtime.rejected[0].error.message, /stale/);
+});
+
 test("Relay exposes only the executable Codex app workspace dependency tool", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "relay-codex-runtime-"));
   const previousRuntimeRoot = process.env.CODEX_PRIMARY_RUNTIME_ROOT;
@@ -1996,11 +2391,25 @@ test("Relay exposes only the executable Codex app workspace dependency tool", as
       arguments: "{}",
     }),
   });
+  assert.equal(runtime.dynamic.at(-1).success, false);
+  assert.match(runtime.dynamic.at(-1).text, /No bundled Node.js or Python runtime/);
+  for (const relative of ["node/bin/node", "python/bin/python3"]) {
+    const path = join(directory, "dependencies", relative);
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, "fixture", { mode: 0o755 });
+  }
+  await handleCodexServerRequest(ctx, {
+    adapter, runtime,
+    request: request("deps-2", "item/dynamicTool/call", {
+      namespace: "codex_app", name: "load_workspace_dependencies", arguments: "{}",
+    }),
+  });
   assert.equal(runtime.dynamic.at(-1).success, true);
   const dependencyText = runtime.dynamic.at(-1).text.replaceAll("\\", "/");
   assert.match(dependencyText, /Bundle version: `99\.test`/);
   assert.match(dependencyText, /Node\.js executable: `.*dependencies\/node\/bin\/node`/);
   assert.match(dependencyText, /Python executable: `.*dependencies\/python\/bin\/python3`/);
+  assert.doesNotMatch(dependencyText, /pnpm executable|Node.js packages/);
 
   await handleCodexServerRequest(ctx, {
     adapter,
@@ -2385,6 +2794,58 @@ class McpImageRuntime extends FakeRuntime {
   }
 }
 
+class MixedActivityRuntime extends FakeRuntime {
+  async sendMessage(threadId, message) {
+    this.sent.push({ threadId, message });
+    const turnId = "turn-mixed-activity";
+    queueMicrotask(() => {
+      const items = [
+        {
+          type: "fileChange",
+          id: "edit-1",
+          status: "completed",
+          changes: [{ path: "src/app.ts", action: "modify" }, { path: "src/style.css", action: "modify" }],
+        },
+        {
+          type: "imageView",
+          id: "image-1",
+          status: "completed",
+          path: "/workspace/relay/screenshot.png",
+        },
+        {
+          type: "mcpToolCall",
+          id: "mcp-1",
+          status: "completed",
+          server: "codex_app",
+          tool: "read_skill",
+          arguments: { skill: "imagegen" },
+          result: { content: [{ type: "text", text: "loaded" }] },
+        },
+        {
+          type: "webSearch",
+          id: "search-1",
+          status: "completed",
+          query: "DSH Codex presentation",
+          result: { hits: 3 },
+        },
+      ];
+      for (const item of items) {
+        this.emit("activity", notification("item/completed", threadId, turnId, { item }));
+      }
+      const answer = { type: "agentMessage", id: "answer-mixed-activity", text: "done", phase: "final_answer" };
+      this.emit("activity", notification("item/completed", threadId, turnId, { item: answer }));
+      this.emit("activity", {
+        method: "turn/completed",
+        params: {
+          threadId,
+          turn: { id: turnId, status: "completed", error: null, items: [...items, answer] },
+        },
+      });
+    });
+    return { id: turnId, status: "inProgress", items: [] };
+  }
+}
+
 class HangingInterruptRuntime extends FakeRuntime {
   constructor(interruptError = null) {
     super();
@@ -2394,6 +2855,9 @@ class HangingInterruptRuntime extends FakeRuntime {
 
   async sendMessage(threadId, message) {
     this.sent.push({ threadId, message });
+    this.emit("activity", notification("item/started", threadId, "turn-hanging", {
+      item: { id: "hanging-command", type: "commandExecution", command: "sleep 60", status: "inProgress" },
+    }));
     return { id: "turn-hanging", status: "inProgress", items: [] };
   }
 
@@ -2444,7 +2908,7 @@ function fakeAgent({ id = "dsh-1", tools = null, cwd = "/workspace/relay" } = {}
     session: {
       header: { agentPreset: "relay-codex", cwd },
       events: [],
-      append(type, data) { appended.push({ type, data }); },
+      append(type, data, opts) { appended.push({ type, data, opts }); },
     },
   };
 }
@@ -2486,6 +2950,15 @@ function pngFixture(label) {
 
 function request(id, method, params) {
   return { id, method, params: { threadId: "thread-1", turnId: "turn-1", ...params } };
+}
+
+function activityEvents(agent) {
+  assert.ok(agent.appended.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)));
+  return agent.appended.flatMap(event => event.type === "tool/call" && event.data.name === CODEX_ACTIVITY_TOOL
+    ? [{ data: JSON.parse(event.data.arguments) }]
+    : event.type === "tool/result" && event.data.meta?.codexActivity
+      ? [{ data: event.data.meta.codexActivity }]
+      : []);
 }
 
 async function collect(stream) {

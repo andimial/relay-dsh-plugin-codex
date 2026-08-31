@@ -1,12 +1,14 @@
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 
-import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
+import { ToolCallId, createMessage, LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
+import { CODEX_ACTIVITY_TOOL } from "./codex-activity-wire.mjs";
 
 import { importCodexGeneratedImage, importCodexImage, importCodexMcpImage } from "./codex-image.js";
 import { materializeCodexAttachment } from "./codex-image-input.js";
 import { CODEX_APP_DYNAMIC_TOOLS, codexDshToolSurface } from "./codex-tools.js";
 import { rebindRequiredStatus } from "./connection-status.mjs";
+import { CODEX_EXECUTION_GUIDANCE } from "./execution-guidance.mjs";
 
 export const CODEX_PRESET = "relay-codex";
 export const CODEX_PROVIDER = "relay-codex";
@@ -24,6 +26,8 @@ export class CodexDshAdapter extends LlmAdapter {
     attachments = null,
     logger = console,
     dynamicTools = CODEX_APP_DYNAMIC_TOOLS,
+    executionGuidance = true,
+    executionMode = "enhanced",
   }) {
     super();
     this.runtime = runtime;
@@ -31,7 +35,12 @@ export class CodexDshAdapter extends LlmAdapter {
     this.logger = logger;
     this.linkStore = linkStore;
     this.attachments = attachments;
-    this.dynamicTools = dynamicTools;
+    if (!["enhanced", "native"].includes(executionMode)) {
+      throw new Error(`Unknown Codex execution mode: ${executionMode}`);
+    }
+    this.executionMode = executionMode;
+    this.dynamicTools = executionMode === "native" ? [] : dynamicTools;
+    this.executionGuidance = executionMode !== "native" && executionGuidance ? CODEX_EXECUTION_GUIDANCE : undefined;
     this.links = new Map();
     this.settings = new Map();
     this.bindingModes = new Map();
@@ -39,6 +48,7 @@ export class CodexDshAdapter extends LlmAdapter {
     this.dshOwnedTurnIds = new Map();
     this.pendingThreads = new Map();
     this.agents = new Map();
+    this.dshToolNames = new Map();
     this.dshToolNamesByAlias = new Map();
     this.forwardedSkillCatalogs = new Map();
     this.appliedDynamicToolSignatures = new Map();
@@ -47,6 +57,7 @@ export class CodexDshAdapter extends LlmAdapter {
     this.subagentBindings = new Map();
     this.subagentBindingConflicts = new Set();
     this.activeRootTurns = new Map();
+    this.activeTurnSignals = new Map();
     for (const [sessionId, record] of linkStore?.entries() ?? []) {
       if (record.threadId) this.links.set(sessionId, record.threadId);
       this.settings.set(sessionId, record.config);
@@ -115,6 +126,7 @@ export class CodexDshAdapter extends LlmAdapter {
   detachAgent(sessionId) {
     const key = String(sessionId);
     this.agents.delete(key);
+    this.dshToolNames.delete(key);
     this.dshToolNamesByAlias.delete(key);
     this.forwardedSkillCatalogs.delete(key);
     this.appliedDynamicToolSignatures.delete(key);
@@ -251,7 +263,10 @@ export class CodexDshAdapter extends LlmAdapter {
         throw persistedResumeError(sessionId, linked, error, this);
       }
     }
-    const created = await this.runtime.createSession(settings);
+    const created = await this.runtime.createSession({
+      ...settings,
+      ...(this.executionGuidance ? { developerInstructions: settings.developerInstructions ?? this.executionGuidance } : {}),
+    });
     this.links.set(sessionId, created.id);
     this.bumpBindingEpoch(sessionId);
     this.appliedDynamicToolSignatures.set(sessionId, signature);
@@ -549,7 +564,18 @@ export class CodexDshAdapter extends LlmAdapter {
   }
 
   dshToolName(sessionId, alias) {
-    return this.dshToolNamesByAlias.get(String(sessionId))?.get(alias) ?? null;
+    const key = String(sessionId);
+    return this.dshToolNamesByAlias.get(key)?.get(alias)
+      ?? (this.dshToolNames.get(key)?.has(alias) === true ? alias : null);
+  }
+
+  hasDshTool(sessionId, name) {
+    return this.dshToolNames.get(String(sessionId))?.has(name) === true;
+  }
+
+  signalForInteractionThread(threadId) {
+    const binding = this.interactionBindingForThread(threadId);
+    return binding ? this.activeTurnSignals.get(binding.rootThreadId) : undefined;
   }
 
   async *stream(options) {
@@ -577,8 +603,9 @@ export class CodexDshAdapter extends LlmAdapter {
       ...nativePermissions,
       cwd: agent.session.header.cwd,
     });
-    const dshTools = options.tools ?? [];
+    const dshTools = this.executionMode === "native" ? [] : options.tools ?? [];
     const dshToolSurface = codexDshToolSurface(dshTools, this.dynamicTools);
+    this.dshToolNames.set(sessionId, new Set(dshTools.map(tool => tool.name)));
     this.dshToolNamesByAlias.set(sessionId, dshToolSurface.namesByAlias);
     const threadId = await this.ensureThread(
       sessionId,
@@ -593,8 +620,15 @@ export class CodexDshAdapter extends LlmAdapter {
     };
     const stopActivity = subscribeRuntimeActivity(this.runtime, onActivity);
     this.activeRootTurns.set(threadId, (this.activeRootTurns.get(threadId) ?? 0) + 1);
+    const turnController = new AbortController();
+    const turnSignal = options.signal ? AbortSignal.any([options.signal, turnController.signal]) : turnController.signal;
+    this.activeTurnSignals.set(threadId, turnSignal);
 
     let turnId = null;
+    const state = createStreamState();
+    const step = agent.session.events.findLast(event => event.type === "step/start");
+    const turn = agent.session.events.findLast(event => event.type === "turn/start");
+    state.location = { turn: turn?.data.turn ?? 1, step: step?.data.step ?? 1 };
     try {
       const started = await this.runtime.sendMessage(threadId, {
         ...input,
@@ -606,7 +640,6 @@ export class CodexDshAdapter extends LlmAdapter {
       }
       turnId = started.id;
       this.recordOwnedTurn(sessionId, turnId);
-      const state = createStreamState();
       let completedTurn = null;
       while (!completedTurn) {
         const message = await queue.next();
@@ -634,7 +667,18 @@ export class CodexDshAdapter extends LlmAdapter {
           reason: { kind: "error", failure: { message: completedTurn.error?.message ?? "Codex turn failed", code: "CODEX_TURN_FAILED" } },
         };
       } else {
-        yield { type: "finish", reason: { kind: "stop" }, replayState: { threadId, turnId } };
+        yield {
+          type: "finish", reason: { kind: "stop" },
+          replayState: { response: {
+            threadId, turnId,
+            codexPresentation: {
+              version: 1,
+              blocks: [...state.blocks].map(([itemId, block]) => ({
+                index: block.index, itemId, phase: state.textPhases.get(itemId) ?? null,
+              })),
+            },
+          } },
+        };
       }
     } catch (error) {
       if (options.signal?.aborted) {
@@ -649,6 +693,28 @@ export class CodexDshAdapter extends LlmAdapter {
       }
       throw error;
     } finally {
+      turnController.abort();
+      if (this.activeTurnSignals.get(threadId) === turnSignal) this.activeTurnSignals.delete(threadId);
+      // Interrupt RPCs can deliver the last stdout/settlement after next() has
+      // rejected. Retain only already-owned commands, never new work or prose.
+      if (options.signal?.aborted) {
+        for (const message of queue.drain()) {
+          const params = message.params ?? {};
+          if ((params.turnId ?? params.turn?.id) !== turnId) continue;
+          if (message.method === "item/commandExecution/outputDelta" && state.activityItems.has(params.itemId)
+            || message.method === "item/codeModeShell/outputDelta"
+              && [...state.commandKeys.values()].includes(commandProcessKey(params.processId))) {
+            await this.projectActivity(agent, threadId, turnId, message, state);
+          }
+          const items = message.method === "item/completed" ? [params.item]
+            : message.method === "turn/completed" ? params.turn.items ?? [] : [];
+          for (const item of items) {
+            if (item?.type === "commandExecution" && state.activityItems.has(item.id)) {
+              await this.completeItem(agent, threadId, turnId, item, state);
+            }
+          }
+        }
+      }
       stopActivity();
       queue.close();
       const activeTurns = this.activeRootTurns.get(threadId) ?? 0;
@@ -657,6 +723,14 @@ export class CodexDshAdapter extends LlmAdapter {
         this.activeRootTurns.delete(threadId);
       } else {
         this.activeRootTurns.set(threadId, activeTurns - 1);
+      }
+      for (const [id, item] of state.activityItems) {
+        if (!state.completedActivities.has(id)) {
+          const finalItem = item.type === "commandExecution"
+            ? withCommandOutput(state, state.commandKeys.get(id) ?? commandOutputKey(item), item)
+            : item;
+          this.appendActivity(agent, threadId, turnId, { ...finalItem, status: "failed" }, "completed", state);
+        }
       }
     }
   }
@@ -759,17 +833,23 @@ export class CodexDshAdapter extends LlmAdapter {
     if (message.method === "item/codeModeShell/outputDelta") {
       const key = commandProcessKey(params.processId);
       if (state.closedCommands.has(key)) return [];
-      return commandOutputDelta(state, key, "raw", params.delta ?? "");
+      recordCommandOutput(state, key, "raw", params.delta ?? "");
+      return [];
     }
     if (message.method === "item/commandExecution/outputDelta") {
       if (state.completed.has(params.itemId)) return [];
       const key = state.commandKeys.get(params.itemId) ?? commandItemKey(params.itemId);
-      return commandOutputDelta(state, key, "native", params.delta ?? "");
+      recordCommandOutput(state, key, "native", params.delta ?? "");
+      return [];
     }
     if (message.method === "item/started") {
+      if (params.item?.type === "agentMessage" && params.item.phase) {
+        state.textPhases.set(params.item.id, params.item.phase);
+      }
       if (params.item?.type === "commandExecution") {
         state.commandKeys.set(params.item.id, commandOutputKey(params.item));
       }
+      if (isCodexActivityItem(params.item)) this.appendActivity(agent, threadId, turnId, params.item, "started", state);
       return [];
     }
     if (message.method === "item/completed") {
@@ -785,13 +865,16 @@ export class CodexDshAdapter extends LlmAdapter {
       return completeTextItem(state, item.id, "reasoning", reasoningText(item));
     }
     if (item.type === "agentMessage") {
+      if (item.phase) state.textPhases.set(item.id, item.phase);
       return completeTextItem(state, item.id, "text", item.text ?? "");
     }
     if (item.type === "commandExecution") {
       const key = state.commandKeys.get(item.id) ?? commandOutputKey(item);
       state.closedCommands.add(key);
-      return completeCommandOutput(state, key, item.aggregatedOutput);
+      this.appendActivity(agent, threadId, turnId, withCommandOutput(state, key, item), "completed", state);
+      return [];
     }
+    if (isCodexActivityItem(item)) this.appendActivity(agent, threadId, turnId, item, "completed", state);
     if (item.type === "mcpToolCall" && item.status === "completed") {
       const content = Array.isArray(item.result?.content) ? item.result.content : [];
       const images = content.map((entry, contentIndex) => ({ entry, contentIndex }))
@@ -856,6 +939,50 @@ export class CodexDshAdapter extends LlmAdapter {
       }
     }
     return [];
+  }
+
+  appendActivity(agent, threadId, turnId, item, phase, state) {
+    const id = activityItemId(item);
+    if (!id) return;
+    const previous = state.activityItems.get(id) ?? {};
+    const merged = mergeActivityItem(previous, item);
+    state.activityItems.set(id, merged);
+    if (!state.startedActivities.has(id)) {
+      const payload = activityPayload(threadId, turnId, merged, "started");
+      const callId = ToolCallId(`relay-codex:${JSON.stringify([threadId, turnId, id])}`);
+      const args = JSON.stringify(payload);
+      // Native tool envelopes survive the official persistence vocabulary check.
+      agent.session.append("assistant/message", {
+        ...state.location,
+        message: createMessage({
+          role: "assistant",
+          source: { kind: "model", provider: CODEX_PROVIDER, model: "codex" },
+          content: [{ type: "tool-call", id: callId, name: CODEX_ACTIVITY_TOOL, arguments: args }],
+        }),
+      }, { surfaceOp: "append" });
+      agent.session.append("tool/call", {
+        ...state.location, callId, name: CODEX_ACTIVITY_TOOL, arguments: args,
+      });
+      state.startedActivities.add(id);
+    }
+    if (phase === "completed" && !state.completedActivities.has(id)) {
+      const payload = activityPayload(threadId, turnId, merged, "completed");
+      const callId = ToolCallId(`relay-codex:${JSON.stringify([threadId, turnId, id])}`);
+      agent.session.append("tool/result", {
+        ...state.location,
+        message: createMessage({
+          role: "user",
+          source: { kind: "tool", callId },
+          content: [{
+            type: "tool-result", toolCallId: callId,
+            content: [{ type: "text", text: payload.activity.output ?? payload.activity.title }],
+            isError: payload.activity.status === "error",
+          }],
+        }),
+        meta: { codexActivity: payload },
+      }, { surfaceOp: "append" });
+      state.completedActivities.add(id);
+    }
   }
 }
 
@@ -947,7 +1074,7 @@ function inheritedCodexProvenance(messages = []) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role !== "assistant" || message.source?.kind !== "model") continue;
-    const replay = message.source.replayState;
+    const replay = message.source.replayState?.response ?? message.source.replayState;
     if (message.source.provider !== CODEX_PROVIDER || !replay || typeof replay !== "object") continue;
     const threadId = optionalIdentity(replay.threadId);
     if (!threadId) continue;
@@ -1038,16 +1165,24 @@ class ActivityQueue {
     this.closed = true;
     for (const waiter of this.waiters.splice(0)) waiter.reject(new Error("Codex activity stream closed"));
   }
+
+  drain() {
+    return this.values.splice(0);
+  }
 }
 
 function createStreamState() {
   return {
     nextIndex: 0,
     blocks: new Map(),
+    textPhases: new Map(),
     completed: new Set(),
     commandKeys: new Map(),
     commandSources: new Map(),
     closedCommands: new Set(),
+    activityItems: new Map(),
+    startedActivities: new Set(),
+    completedActivities: new Set(),
   };
 }
 
@@ -1087,57 +1222,39 @@ function completeTextItem(state, id, type, completeText) {
   return chunks;
 }
 
-function completeCommandOutput(state, id, aggregatedOutput) {
-  const completeText = typeof aggregatedOutput === "string" ? aggregatedOutput : "";
-  const sources = state.commandSources.get(id);
-  const chunks = [];
-  if (sources && completeText.startsWith(sources.native)) {
-    const suffix = completeText.slice(sources.native.length);
-    if (suffix) chunks.push(...commandOutputDelta(state, id, "native", suffix));
-  }
-  let block = state.blocks.get(id);
-  if (!block && !completeText) return chunks;
-  if (!block) {
-    block = { index: state.nextIndex++, type: "text", text: "", closed: false };
-    state.blocks.set(id, block);
-    chunks.push({ type: "block-start", index: block.index, blockType: "text" });
-  }
-  if (block.closed) return chunks;
-  if (completeText.startsWith(block.text) && completeText.length > block.text.length) {
-    const delta = completeText.slice(block.text.length);
-    block.text = completeText;
-    chunks.push({ type: "text-delta", index: block.index, text: delta });
-  } else if (completeText && completeText !== block.text && !sources?.raw) {
-    block.text = completeText;
-  }
-  block.closed = true;
-  chunks.push({ type: "block-end", index: block.index, block: { type: "text", text: block.text } });
-  return chunks;
+function withCommandOutput(state, key, item) {
+  const output = commandOutputSnapshot(state, key, item.aggregatedOutput);
+  return output ? { ...item, aggregatedOutput: output } : item;
 }
 
-function commandOutputDelta(state, id, source, delta) {
-  if (!id || !delta) return [];
+function commandOutputSnapshot(state, id, aggregatedOutput) {
+  const completeText = typeof aggregatedOutput === "string" ? aggregatedOutput : "";
+  const sources = state.commandSources.get(id);
+  if (!sources) return completeText;
+  const raw = sources.raw ?? "";
+  const native = sources.native ?? "";
+  if (raw && native) {
+    if (raw === native) return completeText || native;
+    if (native.startsWith(raw)) return native;
+    if (raw.startsWith(native)) return raw;
+    if (completeText && completeText !== native && !native.endsWith(completeText)) return completeText;
+    return `${raw}${native}`;
+  }
+  if (completeText && raw && completeText !== raw) return raw.endsWith(completeText) ? raw : completeText;
+  if (completeText && native && completeText !== native) return native.endsWith(completeText) ? native : completeText;
+  if (completeText) return completeText;
+  if (native) return native;
+  return raw;
+}
+
+function recordCommandOutput(state, id, source, delta) {
+  if (!id || !delta) return;
   let sources = state.commandSources.get(id);
   if (!sources) {
     sources = { raw: "", native: "" };
     state.commandSources.set(id, sources);
   }
-  const previous = sources[source];
   sources[source] += delta;
-  const other = sources[source === "raw" ? "native" : "raw"];
-  const comparable = other.startsWith(previous) ? other.slice(previous.length) : "";
-  const commonLength = commonPrefixLength(delta, comparable);
-  const duplicateLength = commonLength === delta.length || commonLength === comparable.length
-    ? commonLength
-    : 0;
-  return textDelta(state, id, "text", delta.slice(duplicateLength));
-}
-
-function commonPrefixLength(left, right) {
-  const limit = Math.min(left.length, right.length);
-  let index = 0;
-  while (index < limit && left[index] === right[index]) index += 1;
-  return index;
 }
 
 function commandOutputKey(item) {
@@ -1164,6 +1281,128 @@ function permissionConfiguration(events) {
 
 function reasoningText(item) {
   return [...(item.summary ?? []), ...(item.content ?? [])].filter(Boolean).join("\n\n");
+}
+
+function activityPayload(threadId, turnId, item, phase) {
+  const activity = normalizeCodexActivity(item, phase);
+  return { version: 1, threadId, turnId, itemId: String(activityItemId(item)), phase, activity };
+}
+
+function normalizeCodexActivity(item, phase) {
+  const type = String(item.type ?? "toolUse");
+  const failed = ["failed", "declined", "cancelled", "canceled"].includes(item.status)
+    || (item.exitCode != null && Number(item.exitCode) !== 0)
+    || item.result?.isError === true || item.error != null
+    || (item.type === "dynamicToolCall" && item.success === false);
+  const status = phase === "started" ? "running" : failed ? "error" : "completed";
+  return bounded({
+    type,
+    status,
+    title: codexActivityTitle(item),
+    summary: codexActivitySummary(item),
+    input: codexActivityInput(item),
+    output: codexActivityOutput(item),
+    exitCode: item.exitCode,
+    commandActions: item.commandActions,
+  });
+}
+
+function codexActivityTitle(item) {
+  if (item.type === "commandExecution") return "Ran commands";
+  if (item.type === "fileChange") return activityCountTitle(item.changes, "Edited a file", "Edited files");
+  if (item.type === "imageView") return "Viewed an image";
+  if (item.type === "imageGeneration") return "Generated an image";
+  if (item.type === "webSearch") return "Searched web";
+  if (item.type === "mcpToolCall") return mcpActivityTitle(item);
+  if (item.type === "dynamicToolCall") return [item.namespace, item.tool ?? item.name].filter(Boolean).join(" / ") || "Dynamic Tool Call";
+  if (item.type === "plan") return "Updated plan";
+  return humanize(item.type ?? "Activity");
+}
+
+function codexActivitySummary(item) {
+  if (item.type === "commandExecution") return firstLine(item.command);
+  if (item.type === "fileChange") return summarizeValue(item.path ?? item.filePath ?? firstChangedPath(item.changes) ?? item.changes);
+  if (item.type === "imageView" || item.type === "imageGeneration") return summarizeValue(item.path ?? item.savedPath ?? item.prompt);
+  if (item.type === "webSearch") return summarizeValue(item.query ?? item.prompt);
+  if (item.type === "mcpToolCall") return summarizeValue(item.server ? `${item.server}/${item.tool ?? item.name ?? ""}` : item.tool ?? item.name);
+  return summarizeValue(item.summary ?? item.message ?? item.input ?? item.arguments);
+}
+
+function codexActivityInput(item) {
+  if (item.type === "commandExecution") return item.command ? `$ ${item.command}` : undefined;
+  if (item.type === "mcpToolCall") return item.arguments ?? item.input;
+  return item.input ?? item.arguments ?? item.prompt ?? item.changes;
+}
+
+function codexActivityOutput(item) {
+  if (item.type === "dynamicToolCall" && Array.isArray(item.contentItems) && item.contentItems.length > 0) {
+    return item.contentItems.map(content => {
+      if (typeof content.text === "string") return content.text;
+      // Media is rendered through the attachment path, never as base64 text.
+      return `[${content.type ?? "tool result"}]`;
+    }).join("\n");
+  }
+  return item.aggregatedOutput ?? item.output ?? item.result ?? item.error;
+}
+
+function mcpActivityTitle(item) {
+  const tool = String(item.tool ?? item.name ?? "");
+  const server = String(item.server ?? "");
+  const label = tool || server;
+  if (!label) return "Used a tool";
+  return humanize(label.replace(/[_-]+/g, " "));
+}
+
+function activityCountTitle(value, singular, plural) {
+  return Array.isArray(value) && value.length > 1 ? plural : singular;
+}
+
+function firstChangedPath(changes) {
+  if (!Array.isArray(changes)) return undefined;
+  const first = changes.find(change => change?.path || change?.filePath);
+  return first?.path ?? first?.filePath;
+}
+
+function bounded(value) {
+  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+    if (entry === undefined || entry === null || entry === "") return [];
+    const text = typeof entry === "string" ? entry : JSON.stringify(entry, null, 2);
+    return [[key, text.length > 20_000 ? `${text.slice(0, 20_000)}\n...` : text]];
+  }));
+}
+
+function isCodexActivityItem(item) {
+  return item?.id && !["userMessage", "agentMessage", "reasoning"].includes(item.type);
+}
+
+function activityItemId(item) {
+  return item?.id == null ? null : String(item.id);
+}
+
+function mergeActivityItem(previous, item) {
+  return {
+    ...previous,
+    ...item,
+    input: item.input ?? previous.input,
+    arguments: item.arguments ?? previous.arguments,
+    command: item.command ?? previous.command,
+    tool: item.tool ?? previous.tool,
+    name: item.name ?? previous.name,
+    server: item.server ?? previous.server,
+    aggregatedOutput: item.aggregatedOutput ?? previous.aggregatedOutput,
+    output: item.output ?? previous.output,
+    result: item.result ?? previous.result,
+    error: item.error ?? previous.error,
+  };
+}
+
+function summarizeValue(value) {
+  if (value === undefined || value === null) return "";
+  return firstLine(typeof value === "string" ? value : JSON.stringify(value));
+}
+
+function firstLine(value) {
+  return String(value ?? "").split("\n")[0].slice(0, 240);
 }
 
 function humanize(value) {

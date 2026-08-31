@@ -7,7 +7,6 @@ export function installModelSelection(
   otherProvider,
   { retryDelaysMs = DEFAULT_RETRY_DELAYS_MS } = {},
 ) {
-  const connection = ctx.get("connection");
   const operations = new Map();
   const desired = new Map();
   const pending = new Set();
@@ -46,18 +45,18 @@ export function installModelSelection(
     if (!currentTarget(id, target) || operations.has(id)) return;
     operations.set(id, target.generation);
     try {
-      const response = await connection.api.sessions.models({ sessionId: id });
+      const directory = ctx.modelDirectories.directoryFor(id);
+      const models = await directory.load();
       if (!currentTarget(id, target)) return;
-      const { result } = response;
-      if (!result.ok) {
+      if (!models.current) {
         retry(id, target);
         return;
       }
-      const currentProvider = result.value.current.provider;
+      const currentProvider = models.current.provider;
       const group = target.selectedPreset === preset
-        ? result.value.groups.find(candidate => candidate.id === provider)
+        ? models.groups.find(candidate => candidate.id === provider)
         : currentProvider === provider
-          ? result.value.groups.find(candidate => candidate.id !== provider && candidate.id !== otherProvider)
+          ? models.groups.find(candidate => candidate.id !== provider && candidate.id !== otherProvider)
           : null;
       if (target.selectedPreset === preset && currentProvider === provider) return;
       if (!group || group.models.length === 0) {
@@ -65,8 +64,7 @@ export function installModelSelection(
         return;
       }
       const model = group.models[0];
-      const selection = await connection.api.sessions.selectModel({
-        sessionId: id,
+      await directory.select({
         provider: group.id,
         model: model.id,
         ...(model.reasoning?.defaultEffort
@@ -74,10 +72,6 @@ export function installModelSelection(
           : {}),
       });
       if (!currentTarget(id, target)) return;
-      if (!selection.result.ok) {
-        retry(id, target);
-        return;
-      }
       clearRetry(id);
     } catch {
       retry(id, target);

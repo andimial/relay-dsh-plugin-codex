@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600" viewBox="0 0 900 600">
+  <rect width="900" height="600" fill="#ffffff"/>
+  <polygon points="450,105 610,198 610,382 450,475 290,382 290,198" fill="#1d4ed8"/>
+  <text x="450" y="315" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="64" font-weight="700" fill="#ffffff">KEEP_73</text>
+</svg>

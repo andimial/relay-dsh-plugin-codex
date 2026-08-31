@@ -73,9 +73,11 @@ async function renderConversationHost({ legacyGuardControl = false } = {}) {
       children: {
         "conversation.session.header": { kind: "single", scope: "session" },
         "conversation.view": { kind: "list", scope: "session" },
+        "conversation.chat.node": { kind: "keyed", scope: "root" },
         "relay.session-import.provider": { kind: "list", scope: "root" },
         "settings.section": { kind: "list", scope: "root" },
         "sidebar.footer.action": { kind: "list", scope: "root" },
+        "tool.call.toolview": { kind: "keyed", scope: "root" },
       },
     }, () => null);
 
@@ -133,6 +135,8 @@ async function renderConversationHost({ legacyGuardControl = false } = {}) {
         register(options, component) {
           return core.register(options, component);
         },
+        entries: name => core.entries(name),
+        subscribe: (name, listener) => core.subscribe(name, listener),
       },
       locale: {
         register() { return () => {}; },
@@ -145,6 +149,12 @@ async function renderConversationHost({ legacyGuardControl = false } = {}) {
       },
       workspaces: {
         list: observable({ items: [] }),
+      },
+      uiConversation: {
+        events: { register() { return () => {}; } },
+      },
+      modelDirectories: {
+        directoryFor() { throw new Error("unexpected model directory request"); },
       },
       get(name) {
         if (name !== "connection") return undefined;

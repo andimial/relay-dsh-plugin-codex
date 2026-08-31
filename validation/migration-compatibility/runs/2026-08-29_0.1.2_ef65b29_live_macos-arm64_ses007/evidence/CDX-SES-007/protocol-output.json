@@ -1,0 +1,23 @@
+{
+  "threadId": "01a04c60-8a1e-70d2-8c58-7a3febcef577",
+  "resumedThreadId": "01a04c60-8a1e-70d2-8c58-7a3febcef577",
+  "compactResponseKeys": [],
+  "durationMs": 9910,
+  "completionSignal": "contextCompaction-item",
+  "statusTypes": ["idle", "active"],
+  "itemTypes": [
+    "item/started:contextCompaction",
+    "item/completed:contextCompaction"
+  ],
+  "notificationCounts": {
+    "item/completed": 1,
+    "item/started": 1,
+    "mcpServer/startupStatus/updated": 11,
+    "remoteControl/status/changed": 1,
+    "thread/goal/cleared": 1,
+    "thread/status/changed": 2,
+    "thread/tokenUsage/updated": 1,
+    "turn/started": 1
+  },
+  "serverRequestMethods": ["attestation/generate", "attestation/generate"]
+}

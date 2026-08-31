@@ -267,25 +267,27 @@ projects only a non-empty result containing `session_id`, `wall_time_seconds`, a
 malformed results, and completed results without a live `session_id` remain private.
 
 The adapter correlates the sanitized first yield and native command notifications by
-`session_id`/`processId`, then emits one ordered DSH text block. Cross-source overlap
-is removed by cumulative byte position so a byte reported by both sources appears
-once while legitimately repeated native output remains repeated. It must not emit a
-DSH `tool-call` chunk, because doing so would ask the DSH Agent to execute the
-already-running command a second time.
+`session_id`/`processId`, then retains one reconciled activity output. Mirrored raw
+and native output is deduplicated while repeated native output remains repeated.
+It must not emit an executable DSH `tool-call` stream chunk, because doing so would
+ask the DSH Agent to execute the already-running command a second time. Instead,
+presentation-only calls/results use native persistence envelopes with the
+`relay_codex_activity` name and validated activity metadata.
 
-All deltas for one process share one block and retain App Server order. For native-only
-commands, the completed item's `aggregatedOutput` is the authoritative settled value:
-a missing suffix is appended without duplicating the streamed prefix, while a
-non-prefix final snapshot replaces the block value at close. For a code-mode process,
-the aggregate covers only the native PTY side and cannot erase an earlier sanitized
-yield. A completed item with no preceding delta still emits its non-empty aggregate.
-Empty output emits no block. Late deltas after completion are ignored.
+All deltas for one process share one buffer and retain App Server order. For
+native-only commands, the completed item's `aggregatedOutput` supplies the settled
+snapshot. Code-mode output also reconciles sanitized first yields with the native
+PTY side. A completed item with no preceding delta retains its non-empty aggregate.
+Empty output stays empty. Late deltas after completion are ignored. Cancellation
+also drains already-owned command notifications received during the interrupt RPC
+before settling any remaining activity as failed.
 
-The command output blocks are persisted in the assembled assistant message alongside
-Codex commentary and the final answer. This uses DSH's core stream and persistence
-vocabulary, survives Session reload, and remains readable if the Session later changes
-backend. It does not reintroduce plugin-private Session events, which the current DSH
-persistence catalog cannot safely adopt across reloads.
+Bounded command output is persisted in the native tool result's activity metadata,
+separate from assistant commentary and the final answer. The grouped presentation
+shows it as literal text in an expandable panel, never assistant Markdown. Native
+persistence vocabulary survives Session reload without introducing plugin-private
+mandatory event types. See [Execution presentation](spec/execution-presentation.md)
+for ordering, ownership, legacy fallback, and file-delivery acceptance.
 
 `experimentalRawEvents` is immutable App Server Thread creation state in the pinned
 runtime: resume, settings update, and fork cannot enable it for a Thread created by an

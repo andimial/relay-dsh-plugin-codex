@@ -1,0 +1,3 @@
+interface:
+  display_name: "Relay Skill 1212"
+  short_description: "Return the Skill 1212 validation marker"

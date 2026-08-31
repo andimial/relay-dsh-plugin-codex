@@ -1,0 +1,3 @@
+Migration attachment oracle
+FILE_MARKER_7319_KQVT
+End of fixture
