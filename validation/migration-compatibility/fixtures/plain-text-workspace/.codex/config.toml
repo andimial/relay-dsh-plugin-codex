@@ -1,0 +1,8 @@
+[mcp_servers.relay_project_7731]
+command = "/usr/bin/env"
+args = ["node", "/Users/boboyang/work/Relay/integrations/codex/validation/migration-compatibility/fixtures/mcp-stdio-project/stdio-server.mjs"]
+env = { RELAY_MCP_PROJECT_LOG = "/private/tmp/relay-cdx-ext007-20260829-project-log.jsonl" }
+startup_timeout_sec = 10
+tool_timeout_sec = 10
+required = true
+default_tools_approval_mode = "auto"

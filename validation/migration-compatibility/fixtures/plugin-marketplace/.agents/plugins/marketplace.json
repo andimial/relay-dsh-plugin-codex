@@ -1,0 +1,20 @@
+{
+  "name": "relay-validation-1173",
+  "interface": {
+    "displayName": "Relay Validation 1173"
+  },
+  "plugins": [
+    {
+      "name": "relay-migration-fixture-1173",
+      "source": {
+        "source": "local",
+        "path": "./plugins/relay-migration-fixture-1173"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+[mcp_servers.relay_untrusted_4404]
+command = "/usr/bin/env"
+args = ["node", "/Users/boboyang/work/Relay/integrations/codex/validation/migration-compatibility/fixtures/untrusted-project-workspace/mcp-server.mjs"]
+env = { RELAY_CFG004_MCP_LOG = "/private/tmp/relay-cfg004-project-20260829.jsonl" }
+startup_timeout_sec = 10
+tool_timeout_sec = 10
+required = true
+default_tools_approval_mode = "auto"

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "relay_plugin_1313": {
+      "command": "/usr/bin/env",
+      "args": ["node", "./scripts/mcp-server.mjs"],
+      "cwd": ".",
+      "env": {
+        "RELAY_PLUGIN_MCP_LOG": "/private/tmp/relay-cdx-ext013-20260829-plugin-mcp-log.jsonl"
+      },
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 10
+    }
+  }
+}

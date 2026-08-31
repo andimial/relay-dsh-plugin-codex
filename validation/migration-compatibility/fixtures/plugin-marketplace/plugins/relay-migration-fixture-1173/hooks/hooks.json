@@ -1,0 +1,18 @@
+{
+  "description": "Relay migration validation Hook 1414.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/hooks/pre-tool-use.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking Relay plugin Hook 1414"
+          }
+        ]
+      }
+    ]
+  }
+}
