@@ -2,6 +2,8 @@
 
 > **现已支持最新 DSH `0.1.2-alpha.3`。** 插件 `0.2.1` 已在 DSH `0.1.2-alpha.3`、`0.1.2-alpha.2` 与 `0.1.1-rc.2` 上完成兼容验证。[安装插件，立即体验最新版 DSH](https://www.npmjs.com/package/relay-dsh-plugin-codex) · [兼容性详情](docs/dsh-0.1.2-alpha.3.md)。
 
+> **发布通道：** `latest` → `0.2.1`；`next` → `0.2.1-rc.1`。
+
 ```bash
 npx @deepseek-ai/dsh@0.1.2-alpha.3 plugin --profile web add relay-dsh-plugin-codex@0.2.1
 npx @deepseek-ai/dsh@0.1.2-alpha.3 web
@@ -134,7 +136,7 @@ npx @deepseek-ai/dsh@0.1.2-alpha.3 plugin --profile web add relay-dsh-plugin-cod
 npx @deepseek-ai/dsh@0.1.2-alpha.3 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-`next` 标签继续指向 `0.2.0-rc.1`；`latest` 指向 `0.2.1`。
+`next` 标签继续指向 `0.2.1-rc.1`；`latest` 指向 `0.2.1`。
 安装前请以 npm 注册表中实际发布的 dist-tag 为准。
 
 本次预发布保留原生服务档位和恢复后的配置，修复取消轮次的迟到命令清理，

@@ -2,6 +2,8 @@
 
 > **Now supports the latest DSH `0.1.2-alpha.3`.** Plugin `0.2.1` is verified on DSH `0.1.2-alpha.3`, `0.1.2-alpha.2`, and `0.1.1-rc.2`. [Install it and try the latest DSH](https://www.npmjs.com/package/relay-dsh-plugin-codex) · [Compatibility details](docs/dsh-0.1.2-alpha.3.md).
 
+> **Release channels:** `latest` → `0.2.1`; `next` → `0.2.1-rc.1`.
+
 ```bash
 npx @deepseek-ai/dsh@0.1.2-alpha.3 plugin --profile web add relay-dsh-plugin-codex@0.2.1
 npx @deepseek-ai/dsh@0.1.2-alpha.3 web
@@ -141,7 +143,7 @@ on a global `codex` executable:
 npx @deepseek-ai/dsh@0.1.2-alpha.3 plugin --profile web add relay-dsh-plugin-codex@next
 ```
 
-The `next` tag remains on `0.2.0-rc.1`; `latest` points to `0.2.1`.
+The `next` tag remains on `0.2.1-rc.1`; `latest` points to `0.2.1`.
 Check the npm registry for the currently published dist-tag before installing.
 
 This prerelease preserves native service-tier and resumed-thread settings, stops
