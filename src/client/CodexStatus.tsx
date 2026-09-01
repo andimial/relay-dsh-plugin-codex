@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { sessionPreset } from '../../dsh-client-compat.mjs'
 import { fetchCodexStatus, statusLocaleKey, type CodexConnectionStatus } from './codex-status-client.mjs'
 import css from './AdvancedDebug.module.css'
 
@@ -43,7 +44,7 @@ export function useCodexStatus(sessionId?: string, enabled = true): CodexConnect
 }
 
 export function CodexStatusBadge({ sessionId, useSessions, t }: CodexStatusBadgeProps): ReactNode {
-  const preset = useSessions(state => state.byId[sessionId]?.projectionValues?.agentPreset)
+  const preset = useSessions(state => sessionPreset(state.byId[sessionId]))
   const status = useCodexStatus(String(sessionId), preset === 'relay-codex')
   if (preset !== 'relay-codex' || status === null || status.state === 'connected') return null
   return (

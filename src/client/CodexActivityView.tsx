@@ -12,6 +12,7 @@ import { describeActivity, type ActivityCategory } from '../../codex-activity-la
 import type { CodexActivityData } from './codex-activity.ts'
 import css from './CodexActivityView.module.css'
 import { useProcessPresence } from './process-presence.ts'
+import { useCompatibleChat } from './compatible-chat.ts'
 import { canTakeOverCodexProcess } from './codex-process.ts'
 
 type CodexActivityViewProps = PropsRuntime<'conversation.chat.node', 'relay-codex-activity'>
@@ -39,7 +40,7 @@ export const CodexActivityView = memo(function CodexActivityView({ node }: Codex
 })
 
 export function GroupedCodexToolActivityView(props: ToolCallViewProps) {
-  const process = props.useChat(snapshot => {
+  const process = useCompatibleChat(props, snapshot => {
     const native = [...snapshot.nodes.values()].find(node => node.kind === 'tool-call' && node.id === props.callId)
     const location = native?.location
     if (location?.kind !== 'turn' && location?.kind !== 'step') return undefined

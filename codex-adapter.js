@@ -1,7 +1,8 @@
+import { toolCallId as ToolCallId } from "./dsh-compat.mjs";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 
-import { ToolCallId, createMessage, LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
+import { createMessage, LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 import { CODEX_ACTIVITY_TOOL } from "./codex-activity-wire.mjs";
 
 import { importCodexGeneratedImage, importCodexImage, importCodexMcpImage } from "./codex-image.js";

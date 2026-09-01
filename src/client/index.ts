@@ -25,6 +25,7 @@ import {
   scanCodexWorkspace,
 } from './workspace-import-client.mjs'
 import { observeSessionOpen, syncOpenedCodexSessionAndRefresh } from './session-open-sync.mjs'
+import { conversationEvents, withConversationRuntime } from './compatible-runtime.ts'
 
 type DshSlotContractAnchors =
   | ChatNodeOwnerProps
@@ -40,16 +41,18 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const inject = ['slots', 'theme', 'locale', 'sessions', 'workspaces', 'connection', 'uiConversation', 'modelDirectories']
+export const inject = ['slots', 'theme', 'locale', 'sessions', 'workspaces', 'connection']
 
 export function apply(ctx: ClientContext): () => void {
-  applyActivityPresentation(ctx)
   const advancedDebug = applyAdvancedDebug(ctx)
-  installProcessPresentation(ctx, advancedDebug)
   applyWorkspaceImport(ctx)
   applySessionOpenSync(ctx)
   applyConnectionStatus(ctx)
-  return installModelSelection(ctx as ModelSelectionContext, 'relay-codex', 'relay-codex', 'relay-claude')
+  return withConversationRuntime(ctx, inner => {
+    applyActivityPresentation(inner)
+    installProcessPresentation(inner, advancedDebug)
+    return installModelSelection(inner as ModelSelectionContext, 'relay-codex', 'relay-codex', 'relay-claude')
+  })
 }
 
 function applyActivityPresentation(ctx: ClientContext): void {
@@ -57,7 +60,7 @@ function applyActivityPresentation(ctx: ClientContext): void {
     name: 'tool.call.toolview',
     key: CODEX_ACTIVITY_TOOL,
   }, GroupedCodexToolActivityView))
-  ctx.uiConversation.events.register(codexActivityDefinition)
+  conversationEvents(ctx).register(codexActivityDefinition)
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'relay-codex-activity',

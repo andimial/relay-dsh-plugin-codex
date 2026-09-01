@@ -23,16 +23,17 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-describe('process presentation public slot wrappers', () => {
+describe.each(['legacy', 'current'])('%s process presentation public slot wrappers', generation => {
+const locale = generation === 'legacy' ? 'conversation' : 'chat'
   it('waits for native registrations and restores the exact originals on disposal', async () => {
-    const harness = setup()
+    const harness = setup(generation)
     expect(harness.registerProjection).toHaveBeenCalledExactlyOnceWith(codexProcessDefinition)
     expect(harness.core.entries(slot).map(entry => entry.options.key)).toEqual(['relay-codex-process'])
     const Assistant = () => <div>Native assistant</div>
     const Context = () => <div>Native context</div>
     await act(async () => {
-      harness.core.register({ name: slot, key: 'assistant-step', locale: 'chat' }, Assistant)
-      harness.core.register({ name: slot, key: 'context', locale: 'chat' }, Context)
+      harness.core.register({ name: slot, key: 'assistant-step', locale }, Assistant)
+      harness.core.register({ name: slot, key: 'context', locale }, Context)
     })
     const originals = harness.core.entries(slot).filter(entry => entry.options.priority === undefined)
       .filter(entry => entry.options.key !== 'relay-codex-process')
@@ -47,16 +48,16 @@ describe('process presentation public slot wrappers', () => {
   })
 
   it('reconciles a removed and reloaded native renderer without retaining a stale wrapper', async () => {
-    const harness = setup()
+    const harness = setup(generation)
     let remove = () => {}
     await act(async () => {
-      remove = harness.core.register({ name: slot, key: 'assistant-step', locale: 'chat' }, () => <div>First renderer</div>)
+      remove = harness.core.register({ name: slot, key: 'assistant-step', locale }, () => <div>First renderer</div>)
     })
     const originalWrapper = winner(harness.core, 'assistant-step')
     await act(async () => { remove() })
     expect(harness.core.entries(slot).some(entry => entry.options.key === 'assistant-step')).toBe(false)
     await act(async () => {
-      harness.core.register({ name: slot, key: 'assistant-step', locale: 'chat' }, () => <div>Reloaded renderer</div>)
+      harness.core.register({ name: slot, key: 'assistant-step', locale }, () => <div>Reloaded renderer</div>)
     })
     const Wrapper = winner(harness.core, 'assistant-step').component as ComponentType<ChatNodeViewProps<'assistant-step'>>
     expect(winner(harness.core, 'assistant-step')).not.toBe(originalWrapper)
@@ -67,9 +68,9 @@ describe('process presentation public slot wrappers', () => {
 
   it('gates only owned assistant steps on the matching session and turn presence', async () => {
     const native = vi.fn((props: ChatNodeViewProps<'assistant-step'>) => <button onClick={() => { props.inspectCall('fixture-call') }}>Native assistant</button>)
-    const harness = setup()
+    const harness = setup(generation)
     await act(async () => {
-      harness.core.register({ name: slot, key: 'assistant-step', locale: 'chat' }, native)
+      harness.core.register({ name: slot, key: 'assistant-step', locale }, native)
     })
     const Wrapper = winner(harness.core, 'assistant-step').component as ComponentType<ChatNodeViewProps<'assistant-step'>>
     const process = safeProcess()
@@ -102,14 +103,14 @@ describe('process presentation public slot wrappers', () => {
   })
 
   it.each(['children', 'store', 'inject', 'locale'] as const)('leaves native entries with a changed %s contract untouched', async contract => {
-    const harness = setup()
+    const harness = setup(generation)
     const Native = () => <div>Unmodified native entry</div>
     const extra = contract === 'children' ? { children: {} }
       : contract === 'store' ? { store: () => ({}) }
         : contract === 'inject' ? { inject: () => ({}) } : { locale: 'changed-locale' }
     await act(async () => {
       for (const key of ['assistant-step', 'context'] as const) {
-        harness.core.register({ name: slot, key, locale: 'chat', ...extra } as never, Native)
+        harness.core.register({ name: slot, key, locale, ...extra } as never, Native)
       }
     })
     for (const key of ['assistant-step', 'context'] as const) {
@@ -119,9 +120,9 @@ describe('process presentation public slot wrappers', () => {
   })
 
   it('hides only system-prompt context in simple mode after the matching process mounts', async () => {
-    const harness = setup()
+    const harness = setup(generation)
     await act(async () => {
-      harness.core.register({ name: slot, key: 'context', locale: 'chat' }, () => <div>Native context</div>)
+      harness.core.register({ name: slot, key: 'context', locale }, () => <div>Native context</div>)
     })
     const Wrapper = winner(harness.core, 'context').component as ComponentType<ChatNodeViewProps<'context'>>
     const process = safeProcess()
@@ -155,7 +156,7 @@ describe('process presentation public slot wrappers', () => {
 
 // The actual public registry owns shadowing and notifications; only the Cordis
 // inject lifetime is supplied by this fixture, not the browser slot renderer.
-function setup() {
+function setup(generation: string) {
   const core = new SlotCore()
   const disposeRoot = core.register({ name: 'root', children: {
     'conversation.chat.node': { kind: 'keyed', scope: 'session', inject: {
@@ -178,7 +179,9 @@ function setup() {
         effects.push(effect())
       },
     },
-    uiConversation: { events: { register: registerProjection } },
+    get: (name: string) => generation === 'current'
+      ? name === 'uiConversation' ? { events: { register: registerProjection } } : undefined
+      : name === 'conversationEvents' ? { register: registerProjection } : undefined,
   } as unknown as ClientContext
   installProcessPresentation(ctx, debug)
   const dispose = () => { while (effects.length) effects.pop()!() }

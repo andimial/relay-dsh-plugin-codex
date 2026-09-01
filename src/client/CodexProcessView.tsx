@@ -9,10 +9,15 @@ import { canTakeOverCodexProcess, codexProcessAnswerSegments, type CodexProcessS
 import { mountProcess } from './process-presence.ts'
 import { codexProducedFileMentions } from './process-files.ts'
 import css from './CodexProcessView.module.css'
+import { useCompatibleChat } from './compatible-chat.ts'
 
 type ProcessProps = PropsRuntime<'conversation.chat.node', 'relay-codex-process'>
 type Item = { key: string; activities: CodexProcessSegment[] } | CodexProcessSegment
 const markdownLabels = { code: { copyLabel: 'Copy', copiedLabel: 'Copied' }, footnotes: 'Footnotes' }
+const compatibleMarkdownLabels = { labels: markdownLabels, codeLabels: markdownLabels.code }
+type CompatibleProcessProps = Omit<ProcessProps, 'useChat'> & {
+  useChat?: ProcessProps['useChat']
+}
 
 export function groupProcessSegments(segments: readonly CodexProcessSegment[]): Item[] {
   const items: Item[] = []
@@ -27,10 +32,10 @@ export function groupProcessSegments(segments: readonly CodexProcessSegment[]): 
   return items
 }
 
-export function CodexProcessView({ node, sessionId, renderMessageImages, useTurnData, useChat, openFile, fileMentions, turnProcess }: ProcessProps) {
+export function CodexProcessView({ node, sessionId, renderMessageImages, useTurnData, useChat, useSession, openFile, fileMentions, turnProcess }: CompatibleProcessProps) {
   // Legacy activity has no numeric turn in its payload. Its visible anchor still
   // proves an intervening native row; do not move grouped prose across that row.
-  const legacyBoundary = useChat(snapshot => [...snapshot.nodes.values()].some(candidate =>
+  const legacyBoundary = useCompatibleChat({ useChat, useSession }, snapshot => [...snapshot.nodes.values()].some(candidate =>
     candidate.kind === 'relay-codex-activity' && candidate.anchorSeq >= (node.data.firstVisibleSeq ?? Infinity)
       && candidate.anchorSeq <= (node.data.lastSeq ?? -1)))
   // Native compact mode controls the containing row. Yield ownership so its
@@ -106,7 +111,7 @@ function ProcessItems({ segments, renderMessageImages, running, fileMentions, sh
     : item.kind === 'image' && item.attachment
       ? showImages ? <Fragment key={item.key}>{renderMessageImages({ images: [{ attachment: item.attachment }], align: 'start' })}</Fragment> : null
       : <div key={item.key} className={css.prose} data-codex-commentary={item.phase !== 'final_answer' || undefined}>
-          <MarkdownText text={item.text ?? ''} streaming={running && !item.settled} labels={markdownLabels} fileMentions={fileMentions} />
+          <MarkdownText text={item.text ?? ''} streaming={running && !item.settled} {...compatibleMarkdownLabels} fileMentions={fileMentions} />
         </div>)
 }
 
@@ -146,6 +151,6 @@ function ReasoningSummary({ segments }: { segments: readonly CodexProcessSegment
   if (!text) return null
   return <DisclosureRow title="Thinking" icon={<Brain size={16} />} open={open} expandable expandOnRowClick
     onToggle={() => { setOpen(!open) }}>
-    <div className={css.reasoning}><MarkdownText text={text} labels={markdownLabels} /></div>
+    <div className={css.reasoning}><MarkdownText text={text} {...compatibleMarkdownLabels} /></div>
   </DisclosureRow>
 }

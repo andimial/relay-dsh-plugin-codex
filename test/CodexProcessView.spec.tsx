@@ -507,9 +507,9 @@ describe('CodexProcessView readiness', () => {
   })
 })
 
-describe('CodexProcessView legacy boundaries', () => {
+describe.each(['legacy', 'current'])('%s CodexProcessView legacy boundaries', generation => {
   it.each([10, 20, 30])('restores native rows and the hidden fallback when legacy activity arrives at seq %s', anchorSeq => {
-    const { container, publishLegacy } = renderLegacyBoundaryFixture()
+    const { container, publishLegacy } = renderLegacyBoundaryFixture(generation)
     expect(container.querySelector('[data-codex-process-turn]')).not.toBeNull()
     expect(container.querySelector('[data-codex-grouped-call="command"]')).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Read README.md' })).toBeNull()
@@ -528,7 +528,7 @@ describe('CodexProcessView legacy boundaries', () => {
   })
 
   it.each([9, 31])('ignores legacy activity from another turn outside the process range at seq %s', anchorSeq => {
-    const { container, publishLegacy } = renderLegacyBoundaryFixture()
+    const { container, publishLegacy } = renderLegacyBoundaryFixture(generation)
     const process = container.querySelector('[data-codex-process-turn]')
     expect(process).not.toBeNull()
     publishLegacy(anchorSeq)
@@ -539,7 +539,7 @@ describe('CodexProcessView legacy boundaries', () => {
   })
 })
 
-function renderLegacyBoundaryFixture() {
+function renderLegacyBoundaryFixture(generation: string = 'current') {
   const state = processState([tool('command', reading('completed'))], {
     status: 'completed', firstVisibleSeq: 10, lastSeq: 30,
   })
@@ -557,15 +557,17 @@ function renderLegacyBoundaryFixture() {
   const getSnapshot = () => snapshot
   const useChat: React.ComponentProps<typeof CodexProcessView>['useChat'] = selector =>
     selector(useSyncExternalStore(subscribe, getSnapshot, getSnapshot) as never)
+  const hooks = generation === 'current' ? { useChat } : { useSession: (selector: (snapshot: unknown) => unknown) =>
+    selector({ chat: useSyncExternalStore(subscribe, getSnapshot, getSnapshot) }) }
   const nativeProps = {
     sessionId: 'legacy-boundary-session', callId: 'command', toolName: 'relay_codex_activity',
     block: { kind: 'tool-result', callId: 'command', subCalls: [], call: null, isError: false, meta: { codexActivity: payload } },
-    useChat,
+    ...hooks,
   } as ToolCallViewProps
   const processProps = {
     node: { data: state, location: { kind: 'turn', turn: { status: 'closed' } } },
     sessionId: nativeProps.sessionId, renderMessageImages: renderImages,
-    useChat, useTurnData: () => undefined, fileMentions: () => undefined,
+    ...hooks, useTurnData: () => undefined, fileMentions: () => undefined,
   } as unknown as React.ComponentProps<typeof CodexProcessView>
   const result = render(<>
     <GroupedCodexToolActivityView {...nativeProps} />

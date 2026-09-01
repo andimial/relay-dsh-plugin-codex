@@ -1,7 +1,7 @@
+import { toolCallId as ToolCallId } from "./dsh-compat.mjs";
 import { createHash } from "node:crypto";
 
 import {
-  ToolCallId,
   freezeMessage,
   MessageId,
 } from "@deepseek-ai/dsh-llm";
