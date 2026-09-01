@@ -455,6 +455,10 @@ function runtime(events: readonly SessionEventLike[] = [], hasMore = false, defi
   const assembler = new ConversationNodeAssembler(
     { entries: () => definitions, fallbackEntry: () => undefined }, { entries: () => [testView] },
   )
+  // alpha.3 materializes target views lazily after the first consumer
+  // subscribes; alpha.2 eagerly materializes every registered view.
+  ;(assembler as ConversationNodeAssembler & { activateTarget?: (target: string) => boolean })
+    .activateTarget?.('chat')
   assembler.replaceWindow(events.map(input), hasMore)
   assembler.flush()
   return assembler
@@ -865,7 +869,7 @@ describe('minimal legacy presentation gate', () => {
 })
 
 
-describe('DSH alpha.2 packed delta transport', () => {
+describe('DSH packed delta transport', () => {
   it.each(['text', 'reasoning'] as const)('preserves raw %s content, visible anchors, and logical sequences', kind => {
     const raw = [' ', 'hello', ' ', 'world'].map((value, offset) =>
       chunk(3 + offset, { type: kind === 'text' ? 'text-delta' : 'reasoning-delta', index: 0, text: value }))
