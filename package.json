@@ -1,6 +1,6 @@
 {
   "name": "relay-dsh-plugin-codex",
-  "version": "0.2.0-rc.1",
+  "version": "0.2.0",
   "description": "Codex conversation backend for DeepSeek Harness, powered by the Codex App Server with approvals and DSH tool support.",
   "keywords": [
     "dsh-plugin",
@@ -23,7 +23,7 @@
   },
   "publishConfig": {
     "access": "public",
-    "tag": "next"
+    "tag": "latest"
   },
   "scripts": {
     "prepare:dsh": "bash scripts/link-dsh-development-peers.sh",
@@ -114,7 +114,7 @@
   "dependencies": {
     "@openai/codex": "0.149.0",
     "lucide-react": "^1.37.0",
-    "relay-dsh-plugin-session-import": "0.2.0-rc.1"
+    "relay-dsh-plugin-session-import": "0.2.0"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
@@ -127,6 +127,6 @@
     "tsdown": "0.22.2",
     "typescript": "6.0.3",
     "vitest": "^4.1.8",
-    "relay-dsh-plugin-session-import": "github:yangbobo2021/relay-dsh-plugin-session-import#65417a5abd365d19c619c8a1c1679768189a68e4"
+    "relay-dsh-plugin-session-import": "github:yangbobo2021/relay-dsh-plugin-session-import#3e4f633c6845f6d91d8f04bd34719ba5c7ae4fe9"
   }
 }
