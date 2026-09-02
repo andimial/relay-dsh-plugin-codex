@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { installModelSelection } from "../model-selection.mjs";
 
+for (const generation of ['legacy', 'current']) {
+const test = (name, run) => nodeTest(`${generation}: ${name}`, run);
+const presetFields = agentPreset => generation === 'legacy' ? { agentPreset } : { projectionValues: { agentPreset } };
 test("switching a blank Session from Standard to Codex selects Codex capabilities", async () => {
   const harness = modelHarness({ preset: "standard", provider: "standard" });
   const stop = installModelSelection(
@@ -102,10 +105,7 @@ function modelHarness({
   codexReadyAfter = 0,
   selectFails = 0,
 }) {
-  let state = {
-    current: "session-1",
-    byId: { "session-1": { id: "session-1", blank, projectionValues: { agentPreset: preset } } },
-  };
+  let state = { current: "session-1", byId: { "session-1": { id: "session-1", blank, ...presetFields(preset) } } };
   let currentProvider = provider;
   let queries = 0;
   const listeners = new Set();
@@ -137,7 +137,19 @@ function modelHarness({
   };
   return {
     ctx: {
-      modelDirectories: { directoryFor: () => directory },
+      ...(generation === 'current' ? { modelDirectories: { directoryFor: () => directory } } : {
+        connection: { api: { sessions: {
+          async models({ sessionId }) {
+            assert.equal(sessionId, 'session-1');
+            return { result: { ok: true, value: await directory.load() } };
+          },
+          async selectModel({ sessionId, ...selection }) {
+            assert.equal(sessionId, 'session-1');
+            try { await directory.select(selection); return { result: { ok: true } }; }
+            catch (error) { return { result: { ok: false, error: { message: error.message } } }; }
+          },
+        } } },
+      }),
       sessions: { list: {
         getSnapshot: () => state,
         subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
@@ -148,20 +160,13 @@ function modelHarness({
     currentProvider: () => currentProvider,
     modelQueries: () => queries,
     setPreset(agentPreset) {
-      state = {
-        ...state,
-        byId: {
-          ...state.byId,
-          "session-1": {
-            ...state.byId["session-1"],
-            projectionValues: { agentPreset },
-          },
-        },
-      };
+      state = { ...state, byId: { ...state.byId, "session-1": { ...state.byId["session-1"], ...presetFields(agentPreset) } } };
       for (const listener of listeners) listener();
     },
     settle: () => new Promise(resolve => setTimeout(resolve, 10)),
   };
+}
+
 }
 
 async function waitFor(predicate) {

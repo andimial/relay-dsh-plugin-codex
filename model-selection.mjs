@@ -1,3 +1,4 @@
+import { sessionPreset, modelDirectory } from "./dsh-client-compat.mjs";
 const DEFAULT_RETRY_DELAYS_MS = Object.freeze([50, 250, 1_000]);
 
 export function installModelSelection(
@@ -27,7 +28,7 @@ export function installModelSelection(
       && list.current === id
       && latest?.blank === true
       && desired.get(id)?.generation === target.generation
-      && latest.projectionValues?.agentPreset === target.selectedPreset;
+      && sessionPreset(latest) === target.selectedPreset;
   };
 
   const retry = (id, target) => {
@@ -45,7 +46,7 @@ export function installModelSelection(
     if (!currentTarget(id, target) || operations.has(id)) return;
     operations.set(id, target.generation);
     try {
-      const directory = ctx.modelDirectories.directoryFor(id);
+      const directory = modelDirectory(ctx, id);
       const models = await directory.load();
       if (!currentTarget(id, target)) return;
       if (!models.current) {
@@ -86,7 +87,7 @@ export function installModelSelection(
     const list = ctx.sessions.list.getSnapshot();
     const id = list.current;
     if (id === undefined || list.byId[id]?.blank !== true) return;
-    const selectedPreset = list.byId[id]?.projectionValues?.agentPreset;
+    const selectedPreset = sessionPreset(list.byId[id]);
     if (selectedPreset !== preset && selectedPreset === otherProvider) return;
 
     const desiredKey = `${selectedPreset ?? "standard"}`;
