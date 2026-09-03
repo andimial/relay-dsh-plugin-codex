@@ -10,6 +10,7 @@ import { Context } from "@deepseek-ai/cordis";
 import SessionStore, { KNOWN_SESSION_EVENT_TYPES, Session, SessionId } from "@deepseek-ai/dsh-session";
 import JsonlSessionPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { CODEX_ACTIVITY_TOOL } from "../codex-activity-wire.mjs";
+import { loadPersistedSession, sessionEvents, writePersistedSession } from "../dsh-compat.mjs";
 
 import {
   CODEX_THREAD_ACTIVE_WRITER,
@@ -242,10 +243,10 @@ test("command output is persisted as activity and never pollutes assistant markd
     }),
   }, { surfaceOp: "append" });
   persisted.append("turn/end", { turn: 1, reason: { kind: "completed" } });
-  const stored = JSON.parse(JSON.stringify({ header: persisted.header, events: persisted.events }));
-  const reloaded = Session.fromRestore(SessionId("command-output-persistence"), stored.events, stored.header);
+  const stored = JSON.parse(JSON.stringify({ header: persisted.header, events: sessionEvents(persisted) }));
+  const reloaded = Session.fromRestore(SessionId("command-output-persistence"), stored.events, stored.header, 0);
   assert.deepEqual(reloaded.deriveMessages().at(-1).content, assembler.message().content);
-  assert.ok(reloaded.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)));
+  assert.ok(sessionEvents(reloaded).every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)));
 });
 
 for (const compression of ["none", "zstd"]) {
@@ -283,13 +284,12 @@ for (const compression of ["none", "zstd"]) {
       agent.session.append("step/end", { turn: 3, step: 2 });
       agent.session.append("turn/end", { turn: 3, reason: { kind: "completed" } });
       const writer = await mount();
-      await writer.sessionPersistence.create(agent.session.header);
-      await writer.sessionPersistence.append(id, agent.session.events);
+      await writePersistedSession(writer.sessionPersistence, agent.session.header, sessionEvents(agent.session));
       await writer.fiber.dispose();
       const reader = await mount();
       for (let attempt = 0; attempt < 2; attempt++) {
-        const loaded = await reader.sessionPersistence.load(id);
-        assert.deepEqual(loaded.events, agent.session.events);
+        const loaded = await loadPersistedSession(reader.sessionPersistence, id);
+        assert.deepEqual(loaded.events, sessionEvents(agent.session));
         assert.ok(loaded.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)));
         const call = loaded.events.find(event => event.type === "tool/call");
         const result = loaded.events.find(event => event.type === "tool/result");
@@ -298,7 +298,7 @@ for (const compression of ["none", "zstd"]) {
         assert.equal(call.data.step, 2);
         assert.equal(result.data.meta.codexActivity.activity.output, "ok\n");
         assert.equal(result.data.message.source.callId, call.data.callId);
-        const restored = Session.fromRestore(id, loaded.events, loaded.meta);
+        const restored = Session.fromRestore(id, loaded.events, loaded.meta, loaded.inheritedEventCount ?? 0);
         assert.equal(restored.deriveMessages().at(-1).content.some(block => block.type === "text" && block.text === "done"), true);
       }
     } finally {

@@ -4,6 +4,7 @@ import test from "node:test";
 import { Context } from "@deepseek-ai/cordis";
 import { freezeMessage, MessageId } from "@deepseek-ai/dsh-llm";
 import SessionStore, { KNOWN_SESSION_EVENT_TYPES, SessionId } from "@deepseek-ai/dsh-session";
+import { sessionEvents } from "../dsh-compat.mjs";
 
 import {
   buildCodexHistorySeed,
@@ -68,7 +69,7 @@ test("Codex history projects native user and assistant messages in order and is 
     { id: "codex:turn-2:user:u2", role: "user", text: "question two" },
     { id: "codex:turn-2:assistant:a3", role: "assistant", text: "answer two" },
   ]);
-  assert.deepEqual(session.events.filter(event => event.type === "tool/call").map(event => ({
+  assert.deepEqual(sessionEvents(session).filter(event => event.type === "tool/call").map(event => ({
     name: event.data.name,
     arguments: JSON.parse(event.data.arguments),
   })), [{
@@ -78,7 +79,7 @@ test("Codex history projects native user and assistant messages in order and is 
   assert.equal(messages.some(message => message.content.some(
     block => block.type === "text" && block.text.includes("imported from"),
   )), false);
-  assert.equal(session.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
+  assert.equal(sessionEvents(session).every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
   await ctx.fiber.dispose();
 });
 
@@ -128,9 +129,9 @@ test("Codex history preserves public activity types without exposing private rea
   }];
 
   const result = projectCodexHistory(session, turns);
-  const calls = session.events.filter(event => event.type === "tool/call");
-  const results = session.events.filter(event => event.type === "tool/result");
-  const serialized = JSON.stringify(session.events);
+  const calls = sessionEvents(session).filter(event => event.type === "tool/call");
+  const results = sessionEvents(session).filter(event => event.type === "tool/result");
+  const serialized = JSON.stringify(sessionEvents(session));
 
   assert.deepEqual(result, { projectedMessages: 3, projectedActivities: 4, projectedTurns: 1, skippedItems: 1 });
   assert.deepEqual(calls.map(event => event.data.name), ["bash", "edit", "web_search", "run_code"]);
@@ -142,7 +143,7 @@ test("Codex history preserves public activity types without exposing private rea
   assert.equal(serialized.includes("tab closed"), true);
   assert.equal(serialized.includes("private chain"), false);
   assert.equal(serialized.includes("visible summary"), false);
-  assert.equal(session.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
+  assert.equal(sessionEvents(session).every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
   await ctx.fiber.dispose();
 });
 
@@ -181,7 +182,7 @@ test("an empty Codex history does not add a private persistence event", async ()
 
   assert.deepEqual(projected, { projectedMessages: 0, projectedActivities: 0, projectedTurns: 0, skippedItems: 0 });
   assert.equal(session.deriveMessages().length, 0);
-  assert.deepEqual(session.events, []);
+  assert.deepEqual(sessionEvents(session), []);
   await ctx.fiber.dispose();
 });
 
@@ -351,7 +352,7 @@ test("hydrate waits for the title projection durability barrier", async () => {
   });
   ctx.provide("sessionTitle", {
     get(candidate) {
-      const event = candidate.events.findLast(item => item.type === "session/title");
+      const event = sessionEvents(candidate).findLast(item => item.type === "session/title");
       return event ? { title: event.data.title } : undefined;
     },
     rename(candidate, title) {
@@ -362,7 +363,7 @@ test("hydrate waits for the title projection durability barrier", async () => {
   let durable = false;
   ctx.provide("sessionProjectionCache", {
     write: async (candidate) => {
-      assert.equal(candidate.events.at(-1)?.type, "session/title");
+      assert.equal(sessionEvents(candidate).at(-1)?.type, "session/title");
       await new Promise(resolve => { releaseWrite = resolve; });
       durable = true;
     },
@@ -465,7 +466,7 @@ test("open-time sync appends missing terminal external Turns and defers in-progr
   assert.equal(texts.includes("failed answer"), true);
   assert.equal(texts.includes("ledger question"), false);
   assert.equal(texts.includes("running question"), false);
-  assert.deepEqual(session.events.filter(event => event.type === "turn/end").slice(-3).map(event => (
+  assert.deepEqual(sessionEvents(session).filter(event => event.type === "turn/end").slice(-3).map(event => (
     event.data.reason.kind
   )), ["completed", "interrupted", "error"]);
   assert.equal(reads, 2);
@@ -475,7 +476,7 @@ test("open-time sync appends missing terminal external Turns and defers in-progr
     provider: "relay-codex",
     model: "codex-test",
   });
-  assert.equal(session.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
+  assert.equal(sessionEvents(session).every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
   await context.fiber.dispose();
 });
 
@@ -492,7 +493,7 @@ test("cold open-time sync loads persistence without publishing an Agent lifecycl
     }),
     meta: { cwd: "/workspace/relay", agentPreset: "relay-codex" },
   });
-  const durableEvents = structuredClone(stored.events);
+  const durableEvents = structuredClone(sessionEvents(stored));
   const source = thread({
     updatedAt: SOURCE_UPDATED_AT + 1,
     turns: [
@@ -549,6 +550,35 @@ test("cold open-time sync loads persistence without publishing an Agent lifecycl
   ]);
   assert.equal(context.sessions.get(sessionId), undefined);
   await context.fiber.dispose();
+});
+
+test("cold sync forwards the rc.1 inherited event count when restoring persistence", async () => {
+  const loaded = {
+    meta: { id: "seeded", isSeeded: true },
+    events: [{ type: "session/end-seed", seq: 0, time: 1, data: {} }],
+    inheritedEventCount: 1,
+  };
+  let prepared;
+  const target = new DshCodexImportTarget({
+    runtime: {},
+    ctx: {
+      agents: { get: () => undefined },
+      sessions: {
+        get: () => undefined,
+        prepare: (_id, options) => {
+          prepared = options;
+          return { id: "seeded", snapshotEvents: () => loaded.events };
+        },
+      },
+      sessionPersistence: { load: async () => structuredClone(loaded) },
+    },
+  });
+
+  const acquired = await target.acquireSessionForSync("seeded");
+
+  assert.equal(prepared.inheritedEventCount, 1);
+  assert.equal(prepared.seedSource, "persistence");
+  assert.equal(acquired.persistedLength, 1);
 });
 
 test("cold open-time sync adopts a Session that becomes live during persistence load", async () => {
@@ -686,7 +716,7 @@ test("open-time sync rebuilds when the imported DSH model header drifts", async 
   });
   assert.equal(rebuiltSession.deriveMessages().length, 2);
   assert.equal(cacheWrites, 1);
-  assert.equal(rebuiltSession.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
+  assert.equal(sessionEvents(rebuiltSession).every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
   await context.fiber.dispose();
 });
 
@@ -750,7 +780,7 @@ test("open-time sync rebuilds a polluted imported DSH Session from Codex history
       get: key => {
         if (key === "sessionTitle") {
           return {
-            get: candidate => candidate.events.findLast(event => event.type === "session/title"),
+            get: candidate => sessionEvents(candidate).findLast(event => event.type === "session/title"),
             rename(candidate, title) {
               candidate.append("session/title", { title, messageSeqs: [], source: { kind: "user" } });
             },
@@ -791,7 +821,7 @@ test("open-time sync rebuilds a polluted imported DSH Session from Codex history
   const rebuiltText = rebuiltSession.deriveMessages().flatMap(message => message.content
     .filter(block => block.type === "text").map(block => block.text)).join("\n");
   assert.equal(rebuiltText.includes("dirty question"), false);
-  assert.equal(rebuiltSession.events.every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
+  assert.equal(sessionEvents(rebuiltSession).every(event => KNOWN_SESSION_EVENT_TYPES.has(event.type)), true);
   await context.fiber.dispose();
 });
 
@@ -913,7 +943,7 @@ test("rebuild loads a durable replacement without publishing an Agent lifecycle"
         load: async id => {
           assert.equal(String(id), replacementId);
           loaded += 1;
-          return { meta: structuredClone(replacement.header), events: structuredClone(replacement.events) };
+          return { meta: structuredClone(replacement.header), events: structuredClone(sessionEvents(replacement)) };
         },
         append: async (id, events) => {
           assert.equal(String(id), replacementId);

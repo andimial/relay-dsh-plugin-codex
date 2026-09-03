@@ -1,4 +1,10 @@
-import { toolCallId as ToolCallId } from "./dsh-compat.mjs";
+import {
+  appendPersistedEvents,
+  loadPersistedSession,
+  sessionEventCount,
+  sessionEvents,
+  toolCallId as ToolCallId,
+} from "./dsh-compat.mjs";
 import { createHash } from "node:crypto";
 
 import {
@@ -136,17 +142,20 @@ export class DshCodexImportTarget {
 
   async acquireSessionForSync(sessionId) {
     const live = this.liveSession(sessionId);
-    if (live) return { session: live, live: true, persistedLength: live.events.length };
+    if (live) return { session: live, live: true, persistedLength: sessionEventCount(live) };
 
-    const loaded = await this.ctx.sessionPersistence.load(sessionId);
+    const loaded = await loadPersistedSession(this.ctx.sessionPersistence, sessionId);
     const becameLive = this.liveSession(sessionId);
     if (becameLive) {
-      return { session: becameLive, live: true, persistedLength: becameLive.events.length };
+      return { session: becameLive, live: true, persistedLength: sessionEventCount(becameLive) };
     }
     const session = this.ctx.sessions.prepare(sessionId, {
       seed: structuredClone(loaded.events),
       meta: structuredClone(loaded.meta),
       seedSource: "persistence",
+      // rc.1 separates the exact inherited prefix from header.isSeeded.
+      // alpha.3 ignores this unknown option, preserving one runtime artifact.
+      inheritedEventCount: loaded.inheritedEventCount,
     });
     return { session, live: false, persistedLength: loaded.events.length };
   }
@@ -160,10 +169,10 @@ export class DshCodexImportTarget {
       await this.ctx.sessions.flush(acquired.session);
       return;
     }
-    const suffix = acquired.session.events.slice(acquired.persistedLength);
+    const suffix = sessionEvents(acquired.session, acquired.persistedLength);
     if (suffix.length > 0) {
-      await this.ctx.sessionPersistence.append(acquired.session.id, suffix);
-      acquired.persistedLength = acquired.session.events.length;
+      await appendPersistedEvents(this.ctx.sessionPersistence, acquired.session.id, suffix);
+      acquired.persistedLength = sessionEventCount(acquired.session);
     }
   }
 
@@ -182,7 +191,7 @@ export class DshCodexImportTarget {
     const residentReplacement = this.liveSession(sessionId);
     let handle = null;
     let acquired = residentReplacement
-      ? { session: residentReplacement, live: true, persistedLength: residentReplacement.events.length }
+      ? { session: residentReplacement, live: true, persistedLength: sessionEventCount(residentReplacement) }
       : null;
     if (!acquired) {
       try {
@@ -202,7 +211,7 @@ export class DshCodexImportTarget {
         acquired = {
           session: handle.agent.session,
           live: true,
-          persistedLength: handle.agent.session.events.length,
+          persistedLength: sessionEventCount(handle.agent.session),
         };
       } catch (error) {
         if (!isExistingDshSessionError(error)) throw error;
@@ -290,7 +299,7 @@ export function rebuiltSessionId(threadId, oldSessionId = "") {
 
 export function projectCodexHistory(session, turns, options = {}) {
   const existing = new Set(session.deriveMessages().map(message => String(message.id)));
-  let nextTurn = session.events.filter(event => event.type === "turn/start").length + 1;
+  let nextTurn = sessionEvents(session).filter(event => event.type === "turn/start").length + 1;
   let projectedMessages = 0;
   let projectedActivities = 0;
   let projectedTurns = 0;
@@ -359,7 +368,7 @@ export function codexHistoryRebuildReason(session, turns, options = {}) {
   const dshTurnByMessageId = new Map();
   const endReasonByTurn = new Map();
   let currentTurn = null;
-  for (const event of session.events) {
+  for (const event of sessionEvents(session)) {
     if (typeof event.type === "string" && event.type.startsWith("relay-codex/")) {
       return "legacy-relay-codex-event";
     }
@@ -413,12 +422,13 @@ export function codexHistoryRebuildReason(session, turns, options = {}) {
 
 function codexRequestHeaderRebuildReason(session, expectedConfig) {
   if (!expectedConfig) return null;
-  const headers = session.events
+  const events = sessionEvents(session);
+  const headers = events
     .map((event, index) => ({ event, index }))
     .filter(({ event }) => event.type === "request/header");
   if (headers.length === 0) return "codex-request-header-missing";
   if (headers.length > 1) return "codex-request-header-ambiguous";
-  const firstEndSeed = session.events.findIndex(event => event.type === "session/end-seed");
+  const firstEndSeed = events.findIndex(event => event.type === "session/end-seed");
   if (firstEndSeed >= 0 && headers[0].index > firstEndSeed) {
     return "codex-request-header-after-end-seed";
   }
@@ -787,7 +797,7 @@ function codexActivityRebuildReason(session, turns) {
     .map(entry => [entry.callId, entry]));
   const calls = new Map();
   const results = new Map();
-  for (const event of session.events) {
+  for (const event of sessionEvents(session)) {
     if (event.type === "tool/call") calls.set(String(event.data.callId), event.data);
     if (event.type === "tool/result") results.set(String(event.data.message?.source?.callId), event.data);
   }
