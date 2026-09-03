@@ -8,6 +8,7 @@ import SessionStore, { Session, SessionId } from "@deepseek-ai/dsh-session";
 import JsonlSessionPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { zstdCompressSync } from "node:zlib";
 import { repairActivityHistory, scanActivityHistories } from "../scripts/repair-activity-history.mjs";
+import { loadPersistedSession, sessionEvents, writePersistedSession } from "../dsh-compat.mjs";
 
 const payload = {
   version: 1, threadId: "thread-test", turnId: "turn-test", itemId: "item-test", phase: "started",
@@ -34,11 +35,10 @@ for (const compression of ["none", "zstd"]) {
       });
       session.append("turn/end", { turn: 1, reason: { kind: "completed" } });
       const writer = await mount();
-      await writer.sessionPersistence.create(session.header);
-      await writer.sessionPersistence.append(id, session.events);
+      await writePersistedSession(writer.sessionPersistence, session.header, sessionEvents(session));
       await writer.fiber.dispose();
       const reader = await mount();
-      await assert.rejects(reader.sessionPersistence.load(id), { name: "SessionFormatUnsupportedError" });
+      await assert.rejects(loadPersistedSession(reader.sessionPersistence, id), { name: "SessionFormatUnsupportedError" });
       await reader.fiber.dispose();
       const path = join(root, (await readdir(root, { recursive: true })).find(file => file.endsWith(compression === "zstd" ? ".jsonl.zstd" : ".jsonl")));
       const original = await readFile(path);
@@ -48,8 +48,8 @@ for (const compression of ["none", "zstd"]) {
       assert.equal(repaired.changed, 2);
       assert.deepEqual(await readFile(repaired.backup), original);
       const fixed = await mount();
-      const loaded = await fixed.sessionPersistence.load(id);
-      assert.deepEqual(loaded.events, session.events.map(event => event.type === "relay-codex/activity"
+      const loaded = await loadPersistedSession(fixed.sessionPersistence, id);
+      assert.deepEqual(loaded.events, sessionEvents(session).map(event => event.type === "relay-codex/activity"
         ? { ...event, ignorable: true } : event));
       const repairedBytes = await readFile(path);
       assert.equal((await repairActivityHistory(path, { write: true })).changed, 0);

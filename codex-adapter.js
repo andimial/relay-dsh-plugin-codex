@@ -1,4 +1,4 @@
-import { toolCallId as ToolCallId } from "./dsh-compat.mjs";
+import { sessionEvents, toolCallId as ToolCallId } from "./dsh-compat.mjs";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 
@@ -575,7 +575,8 @@ export class CodexDshAdapter extends LlmAdapter {
     const agent = this.agents.get(sessionId);
     if (!agent) throw new Error(`Relay Codex adapter has no attached agent for ${sessionId}`);
 
-    const nativePermissions = permissionConfiguration(agent.session.events);
+    const events = sessionEvents(agent.session);
+    const nativePermissions = permissionConfiguration(events);
     const config = this.configure(sessionId, {
       ...(options.provider === CODEX_PROVIDER ? { model: options.model } : {}),
       ...(options.provider === CODEX_PROVIDER ? { effort: options.reasoningEffort } : {}),
@@ -603,8 +604,8 @@ export class CodexDshAdapter extends LlmAdapter {
 
     let turnId = null;
     const state = createStreamState();
-    const step = agent.session.events.findLast(event => event.type === "step/start");
-    const turn = agent.session.events.findLast(event => event.type === "turn/start");
+    const step = events.findLast(event => event.type === "step/start");
+    const turn = events.findLast(event => event.type === "turn/start");
     state.location = { turn: turn?.data.turn ?? 1, step: step?.data.step ?? 1 };
     try {
       const started = await this.runtime.sendMessage(threadId, {
@@ -1516,8 +1517,9 @@ function subscribeRuntimeActivity(runtime, listener) {
 }
 
 function effectivePreset(session) {
-  for (let index = session.events.length - 1; index >= 0; index -= 1) {
-    const event = session.events[index];
+  const events = sessionEvents(session);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
     if (event.type === "agent-preset/selected") return event.data.agentPreset;
   }
   return session.header.agentPreset;
