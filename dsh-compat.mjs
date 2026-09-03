@@ -65,7 +65,20 @@ export async function appendPersistedEvents(persistence, id, events) {
 }
 
 export async function writePersistedSession(persistence, header, events, inheritedEventCount = 0) {
-  const handle = await persistence.create(header, { inheritedEventCount });
+  const create = Reflect.get(persistence, 'create');
+  if (typeof create !== 'function') throw new TypeError('DSH persistence does not expose create()');
+
+  // alpha.3 and rc.1 expose a service API whose second argument is the
+  // numeric inherited offset. Newer DSH builds return a write handle and use
+  // an options object. The presence of append() distinguishes the services.
+  const append = Reflect.get(persistence, 'append');
+  if (typeof append === 'function') {
+    await Reflect.apply(create, persistence, [header, inheritedEventCount]);
+    await appendPersistedEvents(persistence, header.id, events);
+    return;
+  }
+
+  const handle = await Reflect.apply(create, persistence, [header, { inheritedEventCount }]);
   if (handle && typeof handle.append === 'function') {
     try {
       if (events.length > 0) await handle.append(events);
@@ -75,5 +88,5 @@ export async function writePersistedSession(persistence, header, events, inherit
     }
     return;
   }
-  await appendPersistedEvents(persistence, header.id, events);
+  throw new TypeError('DSH persistence create() did not return a write handle');
 }

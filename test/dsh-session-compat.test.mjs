@@ -50,7 +50,7 @@ test('Persistence compatibility uses alpha.3 load and append methods', async () 
   assert.deepEqual(calls, [{ id: 'alpha', events: EVENTS }]);
 });
 
-test('Persistence compatibility uses rc.1 read and write handles', async () => {
+test('Persistence compatibility uses post-rc.1 read and write handles', async () => {
   const calls = [];
   const persistence = {
     async open(id, access) {
@@ -85,7 +85,24 @@ test('Persistence compatibility uses rc.1 read and write handles', async () => {
   ]);
 });
 
-test('Persistence compatibility writes through the rc.1 create handle', async () => {
+test('Persistence compatibility writes through the alpha.3 and rc.1 service API', async () => {
+  const calls = [];
+  const persistence = {
+    async create(header, inheritedEventCount) {
+      calls.push(['create', header, inheritedEventCount]);
+    },
+    async append(id, events) {
+      calls.push(['append', id, events]);
+    },
+  };
+  await writePersistedSession(persistence, { id: 'rc1' }, EVENTS, 1);
+  assert.deepEqual(calls, [
+    ['create', { id: 'rc1' }, 1],
+    ['append', 'rc1', EVENTS],
+  ]);
+});
+
+test('Persistence compatibility writes through the post-rc.1 create handle', async () => {
   const calls = [];
   const persistence = {
     async create(header, options) {
