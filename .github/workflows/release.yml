@@ -54,7 +54,9 @@ jobs:
       - run: pnpm install --ignore-scripts --frozen-lockfile
         working-directory: upstream/deepseek-harness
       - name: Build official DSH packages
-        run: pnpm run build:lib
+        run: |
+          pnpm run build:native-system
+          pnpm run build:lib
         working-directory: upstream/deepseek-harness
       - run: npm ci --ignore-scripts
       - name: Validate release tag
