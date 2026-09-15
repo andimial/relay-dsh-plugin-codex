@@ -1166,6 +1166,7 @@ function appendDshOwnedTurn(session, turn, codexTurnId) {
   session.append("assistant/message", {
     turn,
     step: 1,
+    stream: [],
     message: freezeMessage({
       id: MessageId(`dsh:${turn}:assistant`),
       role: "assistant",

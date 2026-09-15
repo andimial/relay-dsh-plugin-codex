@@ -929,6 +929,7 @@ export class CodexDshAdapter extends LlmAdapter {
       // Native tool envelopes survive the official persistence vocabulary check.
       agent.session.append("assistant/message", {
         ...state.location,
+        stream: [],
         message: createMessage({
           role: "assistant",
           source: { kind: "model", provider: CODEX_PROVIDER, model: "codex" },
