@@ -55,7 +55,9 @@ jobs:
         working-directory: upstream/deepseek-harness
       - name: Build official DSH packages
         run: |
-          pnpm run build:native-system
+          if node -e "process.exit(require('./package.json').scripts?.['build:native-system'] ? 0 : 1)"; then
+            pnpm run build:native-system
+          fi
           pnpm run build:lib
         working-directory: upstream/deepseek-harness
       - run: npm ci --ignore-scripts
