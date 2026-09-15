@@ -15,6 +15,18 @@ type LegacyAssistantChunkEvent = {
   readonly data: { readonly turn: number; readonly step: number; readonly chunk: StreamChunk }
 }
 
+type CompatibleAssistantLiveChunkEvent = {
+  readonly type: 'assistant/live-chunk'
+  readonly seq: number
+  readonly time: number
+  readonly data: {
+    readonly attemptId: string
+    readonly turn: number
+    readonly step: number
+    readonly chunk: StreamChunk
+  }
+}
+
 type LegacyChunkRowEvent = {
   readonly type: 'chunkrow/text-chunks' | 'chunkrow/reasoning-chunks'
   readonly seq: number
@@ -27,7 +39,7 @@ type LegacyChunkRowEvent = {
   readonly data: { readonly turn: number; readonly step: number; readonly index: number; readonly args: readonly unknown[] }
 }
 
-type CompatibleSessionEventLike = SessionEventLike | LegacyAssistantChunkEvent | LegacyChunkRowEvent
+type CompatibleSessionEventLike = SessionEventLike | LegacyAssistantChunkEvent | CompatibleAssistantLiveChunkEvent | LegacyChunkRowEvent
 
 // Official DSH contracts verified against 0.1.5-rc.2 (fb2c4b9e) and
 // 0.1.6-alpha.1 (0a15e36e).
