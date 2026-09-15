@@ -35,10 +35,11 @@ export async function loadPersistedSession(persistence, id) {
   if (typeof open !== 'function') throw new TypeError('DSH persistence exposes neither load() nor open()');
   const handle = await Reflect.apply(open, persistence, [id, 'read']);
   try {
+    const read = await handle.read();
     return {
       meta: structuredClone(handle.header),
       inheritedEventCount: handle.inheritedEventCount,
-      events: await handle.read(),
+      events: Array.isArray(read) ? read : read.events,
     };
   } finally {
     await handle.close();

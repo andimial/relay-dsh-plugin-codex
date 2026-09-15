@@ -26,7 +26,7 @@ type AdvancedDebugGuardProps = PropsRuntime<'conversation.session.header.actions
 export function AdvancedDebugSection({
   useAdvancedDebug, setAdvancedDebug, t,
 }: AdvancedDebugSectionProps): ReactNode {
-  const enabled = useAdvancedDebug(value => value)
+  const enabled = useAdvancedDebug((value: boolean) => value)
   const codexStatus = useCodexStatus()
   return (
     <section className={css.section}>
@@ -59,7 +59,7 @@ export function AdvancedDebugSection({
 }
 
 export function AdvancedDebugGuard({ useAdvancedDebug }: AdvancedDebugGuardProps): ReactNode {
-  const enabled = useAdvancedDebug(value => value)
+  const enabled = useAdvancedDebug((value: boolean) => value)
   const marker = useRef<HTMLSpanElement>(null)
 
   useLayoutEffect(() => {

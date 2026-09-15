@@ -1,5 +1,5 @@
 import type { ChatConversationViewNode, ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionEventLike, SessionEventLikeEntry } from '@deepseek-ai/dsh-api-session-controller/client'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   ConversationLocation, ConversationMatch, ConversationNodeContext,
@@ -26,7 +26,7 @@ const { assistantDefinition } = await vi.importActual<{ assistantDefinition: Con
   '@deepseek-ai/dsh-client-ui-chat/src/client/conversation-nodes/assistant.ts',
 )
 
-// Native shapes from official DSH 0a53fb55bea101816fa226bb964ae2bed71c343b.
+// Native shapes from official DSH 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d.
 function event<T extends keyof SessionEventMap>(seq: number, type: T, data: SessionEventMap[T]): SessionEvent<T> {
   return { type, seq, time: seq * 100, data,
     ...type === 'assistant/message' || type === 'tool/result' ? { surfaceOp: 'append' } : {},
@@ -119,6 +119,18 @@ function freeze<T>(value: T): T {
 }
 
 describe('Codex process projection', () => {
+  it('projects the current DSH assistant/live-chunk stream shape', () => {
+    const live = {
+      type: 'assistant/live-chunk', seq: 2, time: 200,
+      data: {
+        attemptId: 'attempt-1', turn: 1, step: 1,
+        chunk: { type: 'text-delta', index: 0, text: 'Current stream' },
+      },
+    } as SessionEventLike
+    const projected = reduceCodexProcess(reduceCodexProcess(initialCodexProcessState(1, 100), start()), live)
+    expect(projected.segments).toMatchObject([{ kind: 'text', text: 'Current stream', step: 1, index: 0 }])
+  })
+
   it('starts before visibility and anchors once at the first visible event', () => {
     const events = [start(), chunk(2, { type: 'block-start', index: 0, blockType: 'text' })]
     expect(node(events)).toBeNull()
@@ -450,7 +462,8 @@ const testView: ConversationViewDefinition<ChatConversationViewNode, RuntimeSnap
   },
 }
 
-const input = (event: SessionEventLike) => ({ event, view: undefined })
+const input = (event: SessionEventLike): SessionEventLikeEntry =>
+  event.type === 'assistant/live-chunk' ? { type: 'transient', event } : { type: 'event', event }
 function runtime(events: readonly SessionEventLike[] = [], hasMore = false, definitions: readonly ConversationNodeDefinition[] = [definition]) {
   const assembler = new ConversationNodeAssembler(
     { entries: () => definitions, fallbackEntry: () => undefined }, { entries: () => [testView] },

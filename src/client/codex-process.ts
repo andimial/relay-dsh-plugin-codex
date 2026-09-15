@@ -3,12 +3,34 @@ import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/c
 import type {
   ConversationMatch, ConversationNodeContext, ConversationNodeDefinition,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { ContentBlock, ImageBlock } from '@deepseek-ai/dsh-llm/types'
+import type { ContentBlock, ImageBlock, StreamChunk } from '@deepseek-ai/dsh-llm/types'
 import type { SessionEvent, TurnEndReason } from '@deepseek-ai/dsh-session/types'
 import { CODEX_ACTIVITY_TOOL, readActivityPayload } from '../../codex-activity-wire.mjs'
 import type { CodexActivityData, CodexActivityEventData } from './codex-activity.ts'
 
-// Official DSH contracts verified against 0a53fb55bea101816fa226bb964ae2bed71c343b.
+type LegacyAssistantChunkEvent = {
+  readonly type: 'assistant/chunk'
+  readonly seq: number
+  readonly time: number
+  readonly data: { readonly turn: number; readonly step: number; readonly chunk: StreamChunk }
+}
+
+type LegacyChunkRowEvent = {
+  readonly type: 'chunkrow/text-chunks' | 'chunkrow/reasoning-chunks'
+  readonly seq: number
+  readonly time: number
+  readonly data: { readonly turn: number; readonly step: number; readonly index: number; readonly texts: readonly string[] }
+} | {
+  readonly type: 'chunkrow/tool-call-chunks'
+  readonly seq: number
+  readonly time: number
+  readonly data: { readonly turn: number; readonly step: number; readonly index: number; readonly args: readonly unknown[] }
+}
+
+type CompatibleSessionEventLike = SessionEventLike | LegacyAssistantChunkEvent | LegacyChunkRowEvent
+
+// Official DSH contracts verified against 0.1.5-rc.2 (fb2c4b9e) and
+// 0.1.6-alpha.1 (0a15e36e).
 export type CodexProcessPhase = 'commentary' | 'final_answer'
 export type CodexProcessStatus = 'running' | 'completed' | 'error'
 export type CodexProcessTakeoverReason =
@@ -312,13 +334,13 @@ function assistantMessage(state: CodexProcessState, event: SessionEvent<'assista
 }
 
 /** Pure ordered fold; no changes to native events, messages, blocks, or attachments. */
-export function reduceCodexProcess(state: CodexProcessState, event: SessionEventLike): CodexProcessState {
+export function reduceCodexProcess(state: CodexProcessState, event: CompatibleSessionEventLike): CodexProcessState {
   const next = foldCodexProcess(state, event)
   return next === state ? state : withTakeoverSafety(next)
 }
 
-function foldCodexProcess(state: CodexProcessState, event: SessionEventLike): CodexProcessState {
-  const matched = codexProcessDefinition.match(event)
+function foldCodexProcess(state: CodexProcessState, event: CompatibleSessionEventLike): CodexProcessState {
+  const matched = codexProcessDefinition.match(event as SessionEventLike)
   if (event.type === 'chunkrow/text-chunks' || event.type === 'chunkrow/reasoning-chunks'
     || event.type === 'chunkrow/tool-call-chunks') {
     if (!matched || matched.id !== String(state.turn)) return state
@@ -378,7 +400,8 @@ function foldCodexProcess(state: CodexProcessState, event: SessionEventLike): Co
         activity: { ...previous.activity, status: isError ? 'error' : 'completed' },
       }, event.seq)
     }
-    case 'assistant/chunk': {
+    case 'assistant/chunk':
+    case 'assistant/live-chunk': {
       const { step, chunk } = event.data
       if (state.foreignSteps.includes(step)) return next
       if (chunk.type === 'finish') {
@@ -412,10 +435,10 @@ function foldCodexProcess(state: CodexProcessState, event: SessionEventLike): Co
 }
 
 /** Rebuild a window without requiring its turn/start to have been loaded. */
-export function replayCodexProcess(events: readonly SessionEventLike[]): CodexProcessState | undefined {
+export function replayCodexProcess(events: readonly CompatibleSessionEventLike[]): CodexProcessState | undefined {
   let state: CodexProcessState | undefined
   for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
-    const match = codexProcessDefinition.match(event)
+    const match = codexProcessDefinition.match(event as SessionEventLike)
     if (!match) continue
     state ??= initialCodexProcessState(Number(match.id), event.time)
     state = reduceCodexProcess(state, event)
@@ -454,9 +477,10 @@ export function codexProcessAnswerSegments(state: CodexProcessState): readonly C
 export const codexProcessDefinition: ConversationNodeDefinition<CodexProcessState> = {
   kind: 'relay-codex-process',
   target: 'chat',
-  match: event => {
+  match: currentEvent => {
+    const event = currentEvent as CompatibleSessionEventLike
     if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
-    if (event.type === 'turn/end' || event.type === 'assistant/chunk' || event.type === 'assistant/message'
+    if (event.type === 'turn/end' || event.type === 'assistant/chunk' || event.type === 'assistant/live-chunk' || event.type === 'assistant/message'
       || event.type === 'tool/result' || event.type === 'tool/call'
       || event.type === 'chunkrow/text-chunks' || event.type === 'chunkrow/reasoning-chunks'
       || event.type === 'chunkrow/tool-call-chunks') {
@@ -472,10 +496,11 @@ export const codexProcessDefinition: ConversationNodeDefinition<CodexProcessStat
   },
   update: (context, match) => reduceCodexProcess(context.state, match.event),
   publication: (match: ConversationMatch) => {
-    if (match.event.type === 'turn/start') return 'none'
-    if (match.event.type.startsWith('chunkrow/')) return 'animation-frame'
-    if (match.event.type !== 'assistant/chunk') return 'immediate'
-    const type = match.event.data.chunk.type
+    const event = match.event as CompatibleSessionEventLike
+    if (event.type === 'turn/start') return 'none'
+    if (event.type.startsWith('chunkrow/')) return 'animation-frame'
+    if (event.type !== 'assistant/chunk' && event.type !== 'assistant/live-chunk') return 'immediate'
+    const type = event.data.chunk.type
     if (type === 'usage') return 'none'
     return type === 'text-delta' || type === 'reasoning-delta' || type === 'tool-call-delta' ? 'animation-frame' : 'immediate'
   },

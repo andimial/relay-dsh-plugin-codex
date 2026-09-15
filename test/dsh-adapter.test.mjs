@@ -236,6 +236,7 @@ test("command output is persisted as activity and never pollutes assistant markd
   persisted.append("assistant/message", {
     turn: 1,
     step: 1,
+    stream: [],
     message: createMessage({
       role: "assistant",
       content: assembler.message().content,
@@ -276,7 +277,7 @@ for (const compression of ["none", "zstd"]) {
       const assembler = new BlockAssembler();
       for (const chunk of chunks) assembler.push(chunk);
       agent.session.append("assistant/message", {
-        turn: 3, step: 2, message: createMessage({
+        turn: 3, step: 2, stream: [], message: createMessage({
           role: "assistant", source: { kind: "model", provider: "relay-codex", model: "codex-test" },
           content: assembler.message().content,
         }),

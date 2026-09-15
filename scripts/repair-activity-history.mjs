@@ -35,7 +35,8 @@ export async function repairActivityHistory(path, { write = false } = {}) {
   if (!plaintext.endsWith("\n")) throw new Error("Refusing a torn session log");
   const lines = plaintext.slice(0, -1).split("\n");
   const header = JSON.parse(lines[0]);
-  if (header.type !== "session" || header.version !== 0 || typeof header.id !== "string") {
+  const supportedHeader = header.type === "session" && (header.version === 0 || header.version === 3);
+  if (!supportedHeader || typeof header.id !== "string") {
     throw new Error("Unsupported session header");
   }
   let changed = 0;

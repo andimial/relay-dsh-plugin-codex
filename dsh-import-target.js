@@ -536,6 +536,7 @@ function appendProjectedTurn(append, sourceTurn, turn) {
       append("assistant/message", {
         turn,
         step,
+        stream: [],
         message: freezeMessage({
           id: MessageId(entry.id),
           role: "assistant",
@@ -548,6 +549,7 @@ function appendProjectedTurn(append, sourceTurn, turn) {
       append("assistant/message", {
         turn,
         step,
+        stream: [],
         message: freezeMessage({
           id: MessageId(entry.requestId),
           role: "assistant",
